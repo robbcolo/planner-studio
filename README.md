@@ -9,7 +9,7 @@ Web app per progettare in 3D lo studio dentistico partendo dalla planimetria: mu
 3. In **Settings › Pages** scegli *Deploy from a branch*, branch `main`, cartella `/ (root)`, poi Salva.
 4. Dopo un minuto l'app è su `https://<tuo-utente>.github.io/planner-studio/`.
 
-Le planimetrie dei tuoi locali **non sono nel repository**, che è pubblico: arrivano come file progetto `.json` a parte. Al primo avvio scegli *Importa i file dei tuoi locali* e selezionali insieme.
+Le planimetrie dei tuoi locali **non sono nel repository**, che è pubblico: arrivano come file progetto `.json` a parte. Al primo avvio scegli *Importa i file dei tuoi locali* e selezionali insieme. Se importi di nuovo un progetto che hai già, puoi aggiornare solo la planimetria di sfondo lasciando com'erano muri e arredi.
 
 ## Installazione su iPad e Mac
 
@@ -39,12 +39,17 @@ Il codice spazio fa da password: chi conosce sia la configurazione sia il codice
 | File | Contenuto |
 |---|---|
 | `index.html` | struttura della pagina |
-| `style.css` | grafica (tema chiaro e scuro) |
+| `style.css` | grafica (tema chiaro) |
 | `app.js` | tutta la logica: editor 2D, vista 3D e passeggiata, catalogo, salvataggio, export |
 | `sw.js` | cache per l'uso offline |
 | `manifest.webmanifest`, `icons/` | installazione come app |
+| `vendor/` | librerie ospitate nel repository: three.js 0.169 (3D, controlli, esportazione USDZ), jsPDF 2.5.1 (PDF), pdf.js 3.11 (lettura planimetrie PDF) |
 
-Librerie caricate dalle CDN: three.js 0.169 (3D), jsPDF 2.5.1 (PDF), pdf.js 3.11 (planimetrie PDF), Firebase 10.12 (solo se attivi la sincronizzazione).
+Solo Firebase 10.12 viene caricato da internet, e solo se attivi la sincronizzazione. Tutto il resto funziona anche offline.
+
+## Se la vista 3D non parte
+
+Al posto del 3D compare una scheda con il messaggio d'errore e il browser in uso: fotografala e inviala, serve per capire il problema.
 
 ## Note
 

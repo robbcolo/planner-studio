@@ -1,17 +1,16 @@
 // Planner Studio Dentistico — offline cache
-const VERSION = 'planner-studio-v1';
-const SHELL = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
-const T = 'https://cdn.jsdelivr.net/npm/three@0.169.0/';
-const CDN = [
-  T + 'build/three.module.js', T + 'examples/jsm/controls/OrbitControls.js', T + 'examples/jsm/environments/RoomEnvironment.js',
-  T + 'examples/jsm/geometries/RoundedBoxGeometry.js', T + 'examples/jsm/exporters/USDZExporter.js', T + 'examples/jsm/libs/fflate.module.js',
-  T + 'examples/jsm/utils/TextureUtils.js',
+const VERSION = 'planner-studio-v2';
+const SHELL = [
+  './', './index.html', './style.css', './app.js', './manifest.webmanifest',
+  './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
+  './vendor/three.module.min.js', './vendor/OrbitControls.js', './vendor/RoomEnvironment.js', './vendor/RoundedBoxGeometry.js',
+  './vendor/USDZExporter.js', './vendor/TextureUtils.js', './vendor/fflate.module.js',
+  './vendor/jspdf.umd.min.js', './vendor/pdf.min.js', './vendor/pdf.worker.min.js',
 ];
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {
     const c = await caches.open(VERSION);
-    await c.addAll(SHELL);
-    await Promise.all(CDN.map((u) => fetch(u, { mode: 'cors' }).then((r) => r.ok && c.put(u, r)).catch(() => {})));
+    await Promise.all(SHELL.map((u) => c.add(u).catch(() => {})));
     self.skipWaiting();
   })());
 });
@@ -21,12 +20,12 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const req = e.request; if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (/firestore\.googleapis\.com|googleapis\.com\/google\.firestore/.test(url.href)) return; // live sync traffic
   if (url.origin === location.origin) { // app files: network first so updates arrive, cache when offline
-    e.respondWith(fetch(req).then((r) => { const cp = r.clone(); caches.open(VERSION).then((c) => c.put(req, cp)); return r; }).catch(() => caches.match(req).then((r) => r || caches.match('./index.html'))));
+    e.respondWith(fetch(req).then((r) => { if (r.ok) { const cp = r.clone(); caches.open(VERSION).then((c) => c.put(req, cp)); } return r; })
+      .catch(() => caches.match(req).then((r) => r || (req.mode === 'navigate' ? caches.match('./index.html') : Response.error()))));
     return;
   }
-  if (/cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|fonts\.(googleapis|gstatic)\.com|www\.gstatic\.com\/firebasejs/.test(url.href)) { // libraries and fonts: cache first
-    e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((r) => { const cp = r.clone(); caches.open(VERSION).then((c) => c.put(req, cp)); return r; })));
+  if (/fonts\.(googleapis|gstatic)\.com|www\.gstatic\.com\/firebasejs/.test(url.href)) { // fonts and Firebase SDK: cache first
+    e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((r) => { if (r.ok) { const cp = r.clone(); caches.open(VERSION).then((c) => c.put(req, cp)); } return r; })));
   }
 });

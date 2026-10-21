@@ -16,8 +16,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600&display=swap">
+<meta name="color-scheme" content="light">
 <link rel="stylesheet" href="style.css">
-<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"}}</script>
 </head>
 <body>
 <div class="app" id="app">
@@ -74,6 +74,7 @@
         <div class="walk-hint" id="walkHint">WASD o joystick per muoverti · trascina per guardarti intorno</div>
       </div>
       <div class="loading-3d" id="loading3d" hidden>Preparo la vista 3D…</div>
+      <div class="err3d" id="err3d" hidden></div>
       <button class="btn primary fab" id="fabLib" type="button"><span data-ico="plus"></span>Arredi</button>
     </section>
     <aside class="panel" id="panel" aria-label="Pannello">

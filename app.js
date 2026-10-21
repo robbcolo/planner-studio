@@ -133,12 +133,7 @@ function readPalette() {
   }
   PAL.dark = isDarkTheme();
 }
-function isDarkTheme() {
-  const t = document.documentElement.getAttribute('data-theme');
-  if (t === 'dark') return true;
-  if (t === 'light') return false;
-  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-}
+function isDarkTheme() { return false; } // the app always uses the light palette
 function hexA(hex, a) {
   if (!hex || hex[0] !== '#') return hex;
   let h = hex.slice(1);
@@ -1130,10 +1125,10 @@ const Store = {
     if (this.mode === 'firebase') return FB.list();
     if (this.mode === 'cloud') {
       const snap = await this.col().where('kind', '==', 'project').get();
-      return snap.docs.map((d) => { const x = d.data(); return { id: x.pid, name: x.name, updatedAt: x.updatedAt }; });
+      return snap.docs.map((d) => { const x = d.data(); return { id: x.pid, name: x.name, origin: x.origin || null, updatedAt: x.updatedAt }; });
     }
-    if (this.mode === 'local') { const all = await this.idbAll(); return all.filter(([k]) => String(k).startsWith('p:')).map(([, v]) => ({ id: v.pid, name: v.name, updatedAt: v.updatedAt })); }
-    return [...this.mem.values()].filter((v) => v.kind === 'project').map((v) => ({ id: v.pid, name: v.name, updatedAt: v.updatedAt }));
+    if (this.mode === 'local') { const all = await this.idbAll(); return all.filter(([k]) => String(k).startsWith('p:')).map(([, v]) => ({ id: v.pid, name: v.name, origin: v.origin || null, updatedAt: v.updatedAt })); }
+    return [...this.mem.values()].filter((v) => v.kind === 'project').map((v) => ({ id: v.pid, name: v.name, origin: v.origin || null, updatedAt: v.updatedAt }));
   },
   async load(pid) {
     let rec;
@@ -1145,7 +1140,7 @@ const Store = {
   },
   async save(p) {
     const json = this.serialize(p);
-    const rec = { kind: 'project', pid: p.id, name: p.name, updatedAt: p.updatedAt || Date.now(), json };
+    const rec = { kind: 'project', pid: p.id, name: p.name, origin: p.origin || null, updatedAt: p.updatedAt || Date.now(), json };
     if (this.mode === 'firebase') { if (json.length > 1000000) throw new Error('Progetto troppo grande per la sincronizzazione'); return this.queue('fb:' + p.id, () => FB.save(rec)); }
     if (this.mode === 'cloud') {
       if (json.length > 250000) throw new Error('Progetto troppo grande per il salvataggio online');
@@ -1277,7 +1272,7 @@ const FB = {
     }
   },
   root() { return this.fs.collection('planner').doc(this.space); },
-  async list() { const s = await this.root().collection('projects').get(); return s.docs.map((d) => { const x = d.data(); return { id: x.pid || d.id, name: x.name, updatedAt: x.updatedAt }; }); },
+  async list() { const s = await this.root().collection('projects').get(); return s.docs.map((d) => { const x = d.data(); return { id: x.pid || d.id, name: x.name, origin: x.origin || null, updatedAt: x.updatedAt }; }); },
   async load(pid) { const d = await this.root().collection('projects').doc(pid).get(); return d.exists ? d.data() : null; },
   async meta(pid) { const d = await this.root().collection('projects').doc(pid).get({ source: 'server' }); return d.exists ? { updatedAt: d.data().updatedAt } : null; },
   async save(rec) { await this.root().collection('projects').doc(rec.pid).set(rec); },
@@ -2171,33 +2166,44 @@ const View3D = {
   async ensure() {
     if (this.ready) return true;
     if (this.loading) return this.loading;
+    hide3DError();
     this.loading = (async () => {
       $('#loading3d').hidden = false;
       try {
-        const base = 'https://cdn.jsdelivr.net/npm/three@0.169.0/';
         let T, oc, re, rb;
-        try { // addons resolve 'three' through the page import map
-          T = await import(base + 'build/three.module.js');
-          [oc, re, rb] = await Promise.all([
-            import(base + 'examples/jsm/controls/OrbitControls.js'),
-            import(base + 'examples/jsm/environments/RoomEnvironment.js'),
-            import(base + 'examples/jsm/geometries/RoundedBoxGeometry.js'),
-          ]);
-        } catch (e1) { // fallback without import maps: jsDelivr ESM bundles share one three instance
-          console.warn('import map non disponibile, uso +esm', e1);
-          T = await import(base + '+esm');
-          [oc, re, rb] = await Promise.all([
-            import(base + 'examples/jsm/controls/OrbitControls.js/+esm'),
-            import(base + 'examples/jsm/environments/RoomEnvironment.js/+esm'),
-            import(base + 'examples/jsm/geometries/RoundedBoxGeometry.js/+esm'),
-          ]);
+        if (BUILD === 'github') { // same-origin copies: no CDN, no import map, works offline
+          T = await import('./vendor/three.module.min.js');
+          [oc, re, rb] = await Promise.all([import('./vendor/OrbitControls.js'), import('./vendor/RoomEnvironment.js'), import('./vendor/RoundedBoxGeometry.js')]);
+        } else {
+          const base = 'https://cdn.jsdelivr.net/npm/three@0.169.0/';
+          try { // jsDelivr ESM bundles: addons point at the same three instance, no import map needed
+            T = await import(base + '+esm');
+            [oc, re, rb] = await Promise.all([
+              import(base + 'examples/jsm/controls/OrbitControls.js/+esm'),
+              import(base + 'examples/jsm/environments/RoomEnvironment.js/+esm'),
+              import(base + 'examples/jsm/geometries/RoundedBoxGeometry.js/+esm'),
+            ]);
+          } catch (e1) { // fallback: plain module files resolved through the page import map
+            console.warn('+esm non disponibile, uso i file del pacchetto', e1);
+            T = await import(base + 'build/three.module.js');
+            [oc, re, rb] = await Promise.all([
+              import(base + 'examples/jsm/controls/OrbitControls.js'),
+              import(base + 'examples/jsm/environments/RoomEnvironment.js'),
+              import(base + 'examples/jsm/geometries/RoundedBoxGeometry.js'),
+            ]);
+          }
         }
         THREE = T; OrbitControls = oc.OrbitControls; RoomEnvironment = re.RoomEnvironment; RoundedBoxGeometry = rb.RoundedBoxGeometry;
-        this.setup(); this.ready = true; return true;
       } catch (e) {
-        console.error(e); toast('Non riesco a caricare il motore 3D: controlla la connessione e riprova', 5000);
-        this.loading = null; return false;
+        console.error(e); this.loading = null;
+        show3DError('Non riesco a caricare il motore 3D. Controlla la connessione e riprova.', e); return false;
       } finally { $('#loading3d').hidden = true; }
+      try { this.setup(); }
+      catch (e) {
+        console.error(e); this.loading = null;
+        show3DError('Il browser non riesce ad avviare la grafica 3D (WebGL).', e); return false;
+      }
+      this.ready = true; return true;
     })();
     return this.loading;
   },
@@ -2208,6 +2214,7 @@ const View3D = {
     r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = .82;
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
     host.appendChild(r.domElement); this.renderer = r;
+    r.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); show3DError('La grafica 3D è stata interrotta dal sistema (memoria GPU). Torna alla pianta e riapri il 3D.'); });
     const sc = new THREE.Scene(); this.scene = sc;
     const pm = new THREE.PMREMGenerator(r); sc.environment = pm.fromScene(new RoomEnvironment(), .04).texture; sc.environmentIntensity = .3;
     this.hemi = new THREE.HemisphereLight(0xeef3ff, 0xb9b0a3, .7); sc.add(this.hemi);
@@ -2243,10 +2250,16 @@ const View3D = {
   },
   frame(t) {
     if (S.view !== '3d' && S.view !== 'walk') return;
-    if (this.dirty) this.rebuild();
-    const dt = Math.min(.05, (t - (this.walk.last || t)) / 1000); this.walk.last = t;
-    if (S.view === 'walk') this.walkStep(dt); else this.controls.update();
-    this.renderer.render(this.scene, this.cam);
+    if (this.failed) return;
+    try {
+      if (this.dirty) this.rebuild();
+      const dt = Math.min(.05, (t - (this.walk.last || t)) / 1000); this.walk.last = t;
+      if (S.view === 'walk') this.walkStep(dt); else this.controls.update();
+      this.renderer.render(this.scene, this.cam);
+    } catch (e) {
+      console.error(e); this.failed = true;
+      show3DError('Si è verificato un errore mentre disegnavo il 3D.', e);
+    }
   },
 
   // ---------------- scene build ----------------
@@ -2597,6 +2610,24 @@ function drawMinimap() {
 function schedule3D() { View3D.dirty = true; }
 function liveUpdateItem3D(it) { if (View3D.ready && S.view !== '2d') View3D.liveItem(it); }
 function isTyping(e) { const t = e.target; return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
+
+// ---------- visible error card for the 3D view ----------
+function show3DError(msg, err) {
+  const box = $('#err3d'); if (!box) { toast(msg, 6000); return; }
+  const detail = err ? String(err && (err.message || err)).slice(0, 300) : '';
+  box.innerHTML = '';
+  box.append(
+    el('div', { class: 'err3d-card' },
+      el('b', {}, 'La vista 3D non si è avviata'),
+      el('p', {}, msg),
+      detail ? el('code', {}, detail) : null,
+      el('p', { class: 'note' }, navigator.userAgent.replace(/\s+/g, ' ').slice(0, 160)),
+      el('div', { class: 'row' },
+        el('button', { class: 'btn primary', type: 'button', onclick: async () => { View3D.failed = false; hide3DError(); const v = S.view === '2d' ? '3d' : S.view; S.view = '2d'; await setView(v); } }, 'Riprova'),
+        el('button', { class: 'btn', type: 'button', onclick: () => { hide3DError(); setView('2d'); } }, 'Torna alla pianta'))));
+  box.hidden = false;
+}
+function hide3DError() { const box = $('#err3d'); if (box) box.hidden = true; }
 
 // ===================== UI: rail, options, panels, sheets =====================
 const RAIL = ['select', 'wall', 'door', 'window', 'room', 'measure', 'pipe', '|', 'calibrate', 'bg'];
@@ -3085,7 +3116,7 @@ function refreshHud3D() {
 
 // ---------- views & phase ----------
 async function setView(v) {
-  if (v !== '2d') { const ok = await View3D.ensure(); if (!ok) return; }
+  if (v !== '2d') { const ok = await View3D.ensure(); if (!ok) { if (S.view === '2d') return; v = '2d'; } }
   const prev = S.view; S.view = v;
   $$('#viewSeg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === v)));
   $('#plan').hidden = v !== '2d'; $('#zoomCtl').hidden = v !== '2d'; $('#toolOpts').hidden = v !== '2d';
@@ -3095,9 +3126,11 @@ async function setView(v) {
     if (S.tool !== 'select') setTool('select'); S.placing = null;
     View3D.resize(); View3D.dirty = true;
     View3D.controls.enabled = v === '3d';
-    if (v === '3d' && (!View3D._presetDone || prev === '2d' && !View3D._presetDone)) { View3D.rebuild(); View3D.preset('iso'); View3D._presetDone = true; }
-    if (v === '3d' && prev === 'walk') { View3D.controls.update(); }
-    if (v === 'walk') { View3D.rebuild(); View3D.enterWalk(); setTimeout(drawMinimap, 50); }
+    try {
+      if (v === '3d' && !View3D._presetDone) { View3D.rebuild(); View3D.preset('iso'); View3D._presetDone = true; }
+      if (v === '3d' && prev === 'walk') { View3D.controls.update(); }
+      if (v === 'walk') { View3D.rebuild(); View3D.enterWalk(); setTimeout(drawMinimap, 50); }
+    } catch (e) { console.error(e); View3D.failed = true; show3DError('Si è verificato un errore mentre costruivo la scena 3D.', e); }
     $('#joystick').hidden = false;
   } else { setTimeout(() => Plan.resize(), 0); }
   refreshToolOpts(); refreshHud3D(); refreshPanel(); requestRender();
@@ -3117,6 +3150,16 @@ function openSheet(build) {
 }
 function closeSheet() { $('#sheetBack').hidden = true; $('#sheet').innerHTML = ''; }
 function sheetHead(title, sub) { return el('div', { class: 'sheet-head' }, el('div', {}, el('h3', {}, title), sub ? el('p', { style: { marginTop: '4px' } }, sub) : null), el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Chiudi', onclick: closeSheet, html: icon('close') })); }
+function chooseSheet(title, text, options) {
+  return new Promise((resolve) => {
+    let done = false; const finish = (v) => { if (done) return; done = true; closeSheet(); resolve(v); };
+    openSheet((sh) => {
+      sh.append(el('div', { class: 'sheet-head' }, el('div', {}, el('h3', {}, title), text ? el('p', { style: { marginTop: '4px' } }, text) : null), el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Annulla', onclick: () => finish(null), html: icon('close') })));
+      sh.append(el('div', { class: 'proj-list' }, ...options.map(([v, label, sub, primary]) => el('button', { class: 'proj-item', type: 'button', style: { textAlign: 'left', cursor: 'pointer', width: '100%', borderColor: primary ? 'var(--accent)' : undefined }, onclick: () => finish(v) }, el('div', {}, el('div', { class: 'nm' }, label), sub ? el('div', { class: 'meta' }, sub) : null), el('span', { html: icon('check') })))));
+    });
+    const back = $('#sheetBack'); const obs = new MutationObserver(() => { if (back.hidden) { obs.disconnect(); finish(null); } }); obs.observe(back, { attributes: true, attributeFilter: ['hidden'] });
+  });
+}
 function confirmSheet(title, text, label, onOk) {
   openSheet((sh) => { sh.append(sheetHead(title), el('p', {}, text), el('div', { class: 'row', style: { justifyContent: 'flex-end' } }, el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Annulla'), el('button', { class: 'btn primary', type: 'button', onclick: () => { closeSheet(); onOk(); } }, label))); });
 }
@@ -3189,9 +3232,9 @@ function openHelp() {
 }
 
 // ===================== export / import =====================
-const JSPDF_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-const PDFJS_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const JSPDF_URL = BUILD === 'github' ? 'vendor/jspdf.umd.min.js' : 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+const PDFJS_URL = BUILD === 'github' ? 'vendor/pdf.min.js' : 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+const PDFJS_WORKER_URL = BUILD === 'github' ? new URL('vendor/pdf.worker.min.js', document.baseURI).href : 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const safeName = (s) => (s || 'progetto').replace(/[^\p{L}\p{N} _.-]+/gu, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'progetto';
 
 function withLightPalette(fn) {
@@ -3252,12 +3295,37 @@ async function importJSONFile(file) {
   try {
     const txt = await file.text(); const data = JSON.parse(txt);
     const proj = data.project || data; if (!proj.walls) throw new Error('Il file non contiene un progetto');
-    const p = normalizeProject(deepClone(proj)); p.id = uid('p'); p.name = p.name || 'Progetto importato';
-    try { const names = new Set((await Store.list()).map((x) => x.name)); if (names.has(p.name)) p.name += ' (importato)'; } catch { }
-    if (data.bgData && p.bg) { p.bg.src = 'img:' + p.id; const img = await loadImg(data.bgData); const c = await imageToDataUrl(img, Store.maxBgChars()); p.bg.mpp *= (p.bg.w / c.w); p.bg.w = c.w; p.bg.h = c.h; S.bgData.set(p.bg.src, c.url); p._bgDirty = true; }
+    const p = normalizeProject(deepClone(proj)); p.origin = proj.origin || proj.id; p.id = uid('p'); p.name = p.name || 'Progetto importato';
+    let list = []; try { list = await Store.list(); } catch { }
+    const same = list.find((x) => x.origin && x.origin === p.origin) || list.find((x) => x.name === p.name);
+    if (same) {
+      const choice = await chooseSheet(`“${p.name}” è già tra i tuoi progetti`, 'Scegli cosa fare con il file che stai importando.', [
+        data.bgData ? ['bg', 'Aggiorna solo la planimetria di sfondo', 'Muri, arredi e misure restano come li hai lasciati.', true] : null,
+        ['replace', 'Sostituisci tutto il progetto', 'Il progetto esistente viene sovrascritto con quello del file.'],
+        ['new', 'Aggiungi come nuovo progetto', 'Tieni entrambi: quello importato avrà “(importato)” nel nome.'],
+      ].filter(Boolean));
+      if (!choice) return;
+      if (choice === 'bg') { await replaceBackground(same.id, p, data.bgData); return; }
+      if (choice === 'replace') { p.id = same.id; S.bgData.delete('img:' + same.id); S.bgImages.delete('img:' + same.id); }
+      else p.name += ' (importato)';
+    }
+    if (data.bgData && p.bg) { p.bg.src = 'img:' + p.id; const img = await loadImg(data.bgData); const c = await imageToDataUrl(img, Store.maxBgChars()); p.bg.mpp *= (p.bg.w / c.w); p.bg.w = c.w; p.bg.h = c.h; S.bgData.set(p.bg.src, c.url); S.bgImages.delete(p.bg.src); p._bgDirty = true; }
     else if (p.bg && p.bg.src && p.bg.src.startsWith('img:')) p.bg = null;
-    await openProject(p); await saveNow(p, true); toast('Progetto importato');
+    await openProject(p); await saveNow(p, true); toast(same ? 'Progetto aggiornato' : 'Progetto importato');
   } catch (e) { console.error(e); toast('Importazione non riuscita: ' + e.message, 4000); }
+}
+// swap the background image of a saved project, keeping its walls, items and calibration
+async function replaceBackground(pid, incoming, bgData) {
+  const p = S.project && S.project.id === pid ? S.project : await Store.load(pid);
+  if (!p) throw new Error('Progetto non trovato');
+  const img = await loadImg(bgData); const c = await imageToDataUrl(img, Store.maxBgChars());
+  const src = 'img:' + p.id;
+  if (p.bg) { const k = p.bg.w / c.w; p.bg = { ...p.bg, src, mpp: p.bg.mpp * k, w: c.w, h: c.h }; }
+  else { p.bg = { ...incoming.bg, src, mpp: incoming.bg.mpp * (incoming.bg.w / c.w), w: c.w, h: c.h }; }
+  p.origin = p.origin || incoming.origin;
+  S.bgData.set(src, c.url); S.bgImages.delete(src); p._bgDirty = true; p._dirty = true;
+  if (S.project !== p) await openProject(p); else { requestRender(); refreshPanel(true); }
+  await saveNow(p, true); toast('Planimetria di sfondo aggiornata');
 }
 function dataUrlToBlob(u) { const [h, b64] = u.split(','); const mime = (h.match(/data:([^;]+)/) || [])[1] || 'application/octet-stream'; const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type: mime }); }
 function loadImg(url) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Immagine non leggibile')); i.src = url; }); }
@@ -3372,7 +3440,7 @@ async function loadBackgroundFile(file) {
   try {
     let img;
     if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
-      await loadScript(PDFJS_URL); await loadScript(PDFJS_WORKER_URL);
+      await loadScript(PDFJS_URL);
       const lib = window.pdfjsLib; lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
       const pdf = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
       const page = await pdf.getPage(1); const vp0 = page.getViewport({ scale: 1 });
@@ -3494,7 +3562,7 @@ async function exportUSDZ() {
   toast('Preparo il modello per la realtà aumentata…', 6000);
   try {
     const base = 'https://cdn.jsdelivr.net/npm/three@0.169.0/';
-    let mod; try { mod = await import(base + 'examples/jsm/exporters/USDZExporter.js'); } catch { mod = await import(base + 'examples/jsm/exporters/USDZExporter.js/+esm'); }
+    let mod; if (BUILD === 'github') mod = await import('./vendor/USDZExporter.js'); else { try { mod = await import(base + 'examples/jsm/exporters/USDZExporter.js/+esm'); } catch { mod = await import(base + 'examples/jsm/exporters/USDZExporter.js'); } }
     const prevView = S.view, prevWalls = S.view3d.walls, prevZones = S.view3d.zones;
     S.view3d.walls = 'full'; S.view3d.zones = false; if (S.view === 'walk') S.view = '3d';
     View3D.rebuild(); S.view = prevView;
