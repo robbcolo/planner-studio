@@ -2339,7 +2339,7 @@ const View3D = {
     const disposeGeo = (o) => { o.traverse((c) => { if (c.geometry && !c.geometry._keep) c.geometry.dispose(); }); };
     for (const c of [...this.world.children]) { disposeGeo(c); this.world.remove(c); }
     for (const l of this.roomLights) this.scene.remove(l); this.roomLights = [];
-    this.itemMap.clear(); this.selBox = null;
+    this.itemMap.clear(); this.clearSelBox();
   },
   rebuild() {
     this.dirty = false; if (!S.project) return;
@@ -2487,10 +2487,16 @@ const View3D = {
     wrap.position.set(it.x, elevOf(it), it.y); wrap.rotation.y = -it.rot * DEG; wrap.userData.itemId = it.id;
     this.itemMap.set(it.id, wrap); return wrap;
   },
+  clearSelBox() { // remove every selection outline, including any left over by an earlier rebuild
+    if (!this.scene) return;
+    for (const o of this.scene.children.filter((c) => c.userData.selHelper)) { this.scene.remove(o); o.geometry?.dispose(); o.material?.dispose(); }
+    this.selBox = null;
+  },
   updateSelection() {
-    if (this.selBox) { this.scene.remove(this.selBox); this.selBox = null; }
+    this.clearSelBox();
     if (!S.sel || S.sel.kind !== 'item') return; const g = this.itemMap.get(S.sel.id); if (!g) return;
-    const box = new THREE.Box3().setFromObject(g); this.selBox = new THREE.Box3Helper(box, new THREE.Color(PAL.accent)); this.scene.add(this.selBox);
+    const box = new THREE.Box3().setFromObject(g); this.selBox = new THREE.Box3Helper(box, new THREE.Color(PAL.accent));
+    this.selBox.userData.selHelper = true; this.scene.add(this.selBox);
   },
   liveItem(it) {
     const g = this.itemMap.get(it.id); if (!g) return;
@@ -3081,7 +3087,10 @@ function smartDelete(hard = false) {
     else if (k === 'dim') p.dims = p.dims.filter((x) => x !== o);
     S.sel = null;
   });
-  validateSel(); selectionChanged();
+  validateSel();
+  const left = findSel(S.sel); // an element just marked as demolished or removed disappears from the current view: deselect it
+  if (left && ((S.sel.kind === 'item' && !itemVisible(left)) || (S.sel.kind === 'wall' && !wallVisible(left)) || (S.sel.kind === 'opening' && !openingVisible(left)))) S.sel = null;
+  selectionChanged();
 }
 function duplicateSel() {
   const o = findSel(S.sel); if (!o || S.sel.kind !== 'item') return;
