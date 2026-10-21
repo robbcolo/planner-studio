@@ -1385,7 +1385,7 @@ const Plan = {
   resize() {
     const r = this.cv.getBoundingClientRect(); if (!r.width) return;
     const first = !this.W;
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2.5); this.W = r.width; this.H = r.height;
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2); this.W = r.width; this.H = r.height;
     this.cv.width = Math.round(r.width * this.dpr); this.cv.height = Math.round(r.height * this.dpr);
     if (first && S.project) this.fit(); else requestRender();
   },
@@ -2161,7 +2161,7 @@ const View3D = {
   ready: false, loading: null, renderer: null, scene: null, cam: null, controls: null, world: null, itemsG: null,
   itemMap: new Map(), selBox: null, dirty: true, mode: 'orbit', bounds: null, sun: null, hemi: null, roomLights: [],
   walk: { x: 0, z: 0, yaw: 0, pitch: -.05, keys: new Set(), joy: null, look: null, last: 0 },
-  drag: null, down: null,
+  drag: null, down: null, q: null, losses: 0, lost: false, stage: 'avvio', envRT: null, amb: null, compiling: false,
 
   async ensure() {
     if (this.ready) return true;
@@ -2208,40 +2208,103 @@ const View3D = {
     return this.loading;
   },
   setup() {
-    const host = $('#view3d');
-    const r = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: false });
-    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = .82;
-    r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
-    host.appendChild(r.domElement); this.renderer = r;
-    r.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); show3DError('La grafica 3D è stata interrotta dal sistema (memoria GPU). Torna alla pianta e riapri il 3D.'); });
+    this.q = loadQuality();
     const sc = new THREE.Scene(); this.scene = sc;
-    const pm = new THREE.PMREMGenerator(r); sc.environment = pm.fromScene(new RoomEnvironment(), .04).texture; sc.environmentIntensity = .3;
     this.hemi = new THREE.HemisphereLight(0xeef3ff, 0xb9b0a3, .7); sc.add(this.hemi);
-    const sun = new THREE.DirectionalLight(0xfff3e4, 2.6); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -.0004; sun.shadow.normalBias = .02;
+    this.amb = new THREE.AmbientLight(0xffffff, 0); sc.add(this.amb);
+    const sun = new THREE.DirectionalLight(0xfff3e4, 2.6); sun.castShadow = true; sun.shadow.bias = -.0004; sun.shadow.normalBias = .02;
     sc.add(sun); sc.add(sun.target); this.sun = sun;
     this.cam = new THREE.PerspectiveCamera(45, 1, .05, 300);
     this.world = new THREE.Group(); sc.add(this.world);
-    const el3 = r.domElement;
-    el3.style.touchAction = 'none';
+    this.createRenderer();
+    new ResizeObserver(() => this.resize()).observe($('#stage'));
+    window.addEventListener('keydown', (e) => { if (S.view === 'walk' && !isTyping(e)) { this.walk.keys.add(e.code); if (e.code.startsWith('Arrow')) e.preventDefault(); } });
+    window.addEventListener('keyup', (e) => this.walk.keys.delete(e.code));
+    window.addEventListener('blur', () => this.walk.keys.clear());
+    this.setupJoystick(); this.setupMinimap();
+  },
+  // one WebGL renderer per quality level; recreated after a context loss or a quality change
+  createRenderer() {
+    const Q = QUALITY[this.q]; this.stage = 'creazione grafica';
+    const r = new THREE.WebGLRenderer({ antialias: Q.aa, alpha: false, preserveDrawingBuffer: false, powerPreference: 'default' });
+    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, Q.pr));
+    r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = .82;
+    r.shadowMap.enabled = Q.shadows > 0 && S.view3d.shadows; r.shadowMap.type = Q.soft ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+    const el3 = r.domElement; el3.style.touchAction = 'none';
+    el3.addEventListener('webglcontextlost', (e) => this.onLost(e));
+    el3.addEventListener('webglcontextrestored', () => this.onRestored());
     // our pointer handlers come first so they can disable orbit when dragging an item
     el3.addEventListener('pointerdown', (e) => this.onDown(e));
     el3.addEventListener('pointermove', (e) => this.onMove(e));
     el3.addEventListener('pointerup', (e) => this.onUp(e));
     el3.addEventListener('pointercancel', (e) => this.onUp(e));
+    $('#view3d').appendChild(el3); this.renderer = r;
+    try { const gl = r.getContext(); const ext = gl.getExtension('WEBGL_debug_renderer_info'); this.gpu = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER); } catch { this.gpu = '?'; }
+    const target = this.controls ? this.controls.target.clone() : null; const enabled = this.controls ? this.controls.enabled : true;
+    if (this.controls) this.controls.dispose();
     this.controls = new OrbitControls(this.cam, el3);
     this.controls.enableDamping = true; this.controls.dampingFactor = .09; this.controls.screenSpacePanning = false;
     this.controls.maxPolarAngle = Math.PI / 2 - .03; this.controls.minDistance = .6; this.controls.maxDistance = 80;
     this.controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
-    new ResizeObserver(() => this.resize()).observe($('#stage'));
-    this.resize();
-    // walk input
-    window.addEventListener('keydown', (e) => { if (S.view === 'walk' && !isTyping(e)) { this.walk.keys.add(e.code); if (e.code.startsWith('Arrow')) e.preventDefault(); } });
-    window.addEventListener('keyup', (e) => this.walk.keys.delete(e.code));
-    window.addEventListener('blur', () => this.walk.keys.clear());
-    this.setupJoystick(); this.setupMinimap();
+    if (target) { this.controls.target.copy(target); this.controls.update(); }
+    this.controls.enabled = enabled;
+    this.applyEnv(); this.resize();
+    this.dirty = true; this.stage = 'primo disegno';
     r.setAnimationLoop((t) => this.frame(t));
   },
+  applyEnv() {
+    const Q = QUALITY[this.q];
+    if (this.envRT) { try { this.envRT.dispose(); } catch { } this.envRT = null; }
+    if (Q.env) {
+      this.stage = 'ambiente';
+      const pm = new THREE.PMREMGenerator(this.renderer); this.envRT = pm.fromScene(new RoomEnvironment(), .04); pm.dispose();
+      this.scene.environment = this.envRT.texture; this.scene.environmentIntensity = .3; this.amb.intensity = 0;
+    } else { this.scene.environment = null; this.amb.intensity = .5; }
+    for (const m of MATS.values()) { // without an environment map pure metals render almost black
+      if (!('metalness' in m)) continue;
+      if (m.userData.metal0 === undefined) m.userData.metal0 = m.metalness;
+      m.metalness = Q.env ? m.userData.metal0 : Math.min(m.userData.metal0, .35);
+    }
+    const ms = Q.shadows || 512; this.sun.shadow.mapSize.set(ms, ms);
+    if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
+  },
+  onLost(e) {
+    e.preventDefault(); if (this.lost) return;
+    this.lost = true; this.losses++; console.warn('WebGL context lost', this.stage, this.q);
+    const ld = $('#loading3d'); ld.textContent = 'Riavvio la grafica 3D…'; ld.hidden = false;
+    clearTimeout(this.lostTimer); this.lostTimer = setTimeout(() => this.recover(), 2200);
+  },
+  onRestored() {
+    if (!this.lost) return; clearTimeout(this.lostTimer);
+    if (this.losses >= 2) { this.recover(); return; } // lost again: step down instead of retrying the same settings
+    this.lost = false; $('#loading3d').hidden = true; $('#loading3d').textContent = 'Preparo la vista 3D…';
+    try { this.applyEnv(); } catch (err) { console.warn(err); }
+    this.dirty = true;
+  },
+  // throw the lost renderer away and start a lighter one
+  recover(nextQ) {
+    clearTimeout(this.lostTimer);
+    const order = ['alta', 'media', 'leggera']; const i = order.indexOf(this.q);
+    if (!nextQ && i === order.length - 1 && this.losses > 3) {
+      this.failed = true; $('#loading3d').hidden = true;
+      show3DError('Safari continua a interrompere la grafica 3D anche in qualità leggera.'); return;
+    }
+    this.q = nextQ || order[Math.min(i + 1, order.length - 1)]; saveQuality(this.q);
+    const old = this.renderer;
+    try { old.setAnimationLoop(null); } catch { }
+    this.clearWorld(); // free geometry while the old renderer still tracks it; the scene is rebuilt for the new one
+    this.envRT = null; this.sun.shadow.map = null; // both belonged to the old context
+    try { old.dispose(); } catch { }
+    old.domElement.remove();
+    this.lost = false; this.failed = false;
+    try { this.createRenderer(); }
+    catch (err) { console.error(err); this.failed = true; show3DError('Non riesco a riavviare la grafica 3D.', err); return; }
+    $('#loading3d').hidden = true; $('#loading3d').textContent = 'Preparo la vista 3D…';
+    if (!nextQ) toast('Ho riavviato il 3D in qualità ' + QUALITY[this.q].label.toLowerCase() + ' per stabilità', 4500);
+    refreshHud3D();
+  },
+  setQuality(q) { if (q === this.q || !this.renderer) return; this.losses = 0; this.recover(q); },
+  diag() { return `Qualità ${this.q} · interruzioni ${this.losses} · fase: ${this.stage} · GPU: ${this.gpu || '?'}`; },
   resize() {
     if (!this.renderer) return; const st = $('#stage').getBoundingClientRect(); if (!st.width) return;
     this.renderer.setSize(st.width, st.height, false); this.cam.aspect = st.width / st.height; this.cam.updateProjectionMatrix();
@@ -2250,16 +2313,25 @@ const View3D = {
   },
   frame(t) {
     if (S.view !== '3d' && S.view !== 'walk') return;
-    if (this.failed) return;
+    if (this.failed || this.lost) return;
     try {
-      if (this.dirty) this.rebuild();
+      if (this.dirty) { this.stage = 'costruzione scena'; this.rebuild(); this.precompile(); }
       const dt = Math.min(.05, (t - (this.walk.last || t)) / 1000); this.walk.last = t;
       if (S.view === 'walk') this.walkStep(dt); else this.controls.update();
+      if (this.compiling) return;
       this.renderer.render(this.scene, this.cam);
+      if (this.stage !== 'in uso' && this.stage !== 'passeggiata') this.stage = S.view === 'walk' ? 'passeggiata' : 'in uso';
     } catch (e) {
       console.error(e); this.failed = true;
       show3DError('Si è verificato un errore mentre disegnavo il 3D.', e);
     }
+  },
+
+  // compile shaders without blocking the GPU in one long frame (Safari drops the context on long stalls)
+  precompile() {
+    const r = this.renderer; if (!r.compileAsync) return;
+    this.compiling = true; this.stage = 'compilazione materiali'; const done = () => { this.compiling = false; };
+    Promise.race([r.compileAsync(this.scene, this.cam), new Promise((res) => setTimeout(res, 6000))]).then(done, done);
   },
 
   // ---------------- scene build ----------------
@@ -2274,7 +2346,7 @@ const View3D = {
     readPalette(); this.clearWorld();
     const p = S.project, ph = phase(); const walk = S.view === 'walk';
     this.scene.background = new THREE.Color(PAL.scene);
-    this.renderer.shadowMap.enabled = !!S.view3d.shadows;
+    this.renderer.shadowMap.enabled = !!S.view3d.shadows && QUALITY[this.q].shadows > 0;
     // bounds
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     for (const w of p.walls) for (const q of [w.a, w.b]) { x0 = Math.min(x0, q.x); z0 = Math.min(z0, q.y); x1 = Math.max(x1, q.x); z1 = Math.max(z1, q.y); }
@@ -2297,7 +2369,7 @@ const View3D = {
         const ceilH = Math.max(...p.walls.filter((w) => wallVisible(w, ph) && w.type !== 'parapetto').map((w) => wallH(w)), p.settings.wallH);
         cg.translate(0, ceilH, 0);
         const ce = new THREE.Mesh(cg, mat('matte', '#F7F7F4')); ce.receiveShadow = true; this.world.add(ce);
-        if (st.label && this.roomLights.length < 12) { const L = new THREE.PointLight(0xfff1df, clamp(st.area * .35, 2.5, 7), 0, 2); L.position.set(st.label.x, ceilH - .25, st.label.y); this.scene.add(L); this.roomLights.push(L); }
+        if (st.label && this.roomLights.length < QUALITY[this.q].lights) { const L = new THREE.PointLight(0xfff1df, clamp(st.area * .35, 2.5, 7), 0, 2); L.position.set(st.label.x, ceilH - .25, st.label.y); this.scene.add(L); this.roomLights.push(L); }
       }
     }
     // walls
@@ -2334,7 +2406,7 @@ const View3D = {
     // light rig sized to the plan
     const s = B.size; this.sun.position.set(B.cx - s * .6, s * 1.3 + 4, B.cz + s * .8); this.sun.target.position.set(B.cx, 0, B.cz);
     const sc = this.sun.shadow.camera; sc.left = -s; sc.right = s; sc.top = s; sc.bottom = -s; sc.near = .5; sc.far = s * 4 + 20; sc.updateProjectionMatrix();
-    this.sun.intensity = walk ? 1.2 : 2.6; this.hemi.intensity = walk ? .55 : .7;
+    this.sun.intensity = walk ? 1.2 : 2.6; this.hemi.intensity = (walk ? .55 : .7) + (QUALITY[this.q].lights ? 0 : walk ? .45 : 0);
     this.updateSelection();
   },
   buildWall(w, visWalls, ph, cut, idx) {
@@ -2600,7 +2672,7 @@ function miniView() {
 }
 function drawMinimap() {
   if (S.view !== 'walk') return; const cv = $('#miniCanvas'); const v = miniView(); if (!v) return;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2); cv.width = v.W * dpr; cv.height = v.H * dpr; const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2); const cw = Math.round(v.W * dpr), ch = Math.round(v.H * dpr); if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; } const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
   renderPlan(g, v, { mini: true, miniCam: (gg, w2s) => {
     const W = View3D.walk; const c = w2s({ x: W.x, y: W.z }); const a = Math.atan2(-Math.cos(W.yaw), -Math.sin(W.yaw));
     gg.fillStyle = hexA(PAL.accent, .25); gg.beginPath(); gg.moveTo(c.x, c.y); gg.arc(c.x, c.y, 34, a - .45, a + .45); gg.closePath(); gg.fill();
@@ -2621,13 +2693,23 @@ function show3DError(msg, err) {
       el('b', {}, 'La vista 3D non si è avviata'),
       el('p', {}, msg),
       detail ? el('code', {}, detail) : null,
-      el('p', { class: 'note' }, navigator.userAgent.replace(/\s+/g, ' ').slice(0, 160)),
+      el('p', { class: 'note' }, (View3D.renderer ? View3D.diag() + ' · ' : '') + navigator.userAgent.replace(/\s+/g, ' ').slice(0, 160)),
       el('div', { class: 'row' },
-        el('button', { class: 'btn primary', type: 'button', onclick: async () => { View3D.failed = false; hide3DError(); const v = S.view === '2d' ? '3d' : S.view; S.view = '2d'; await setView(v); } }, 'Riprova'),
+        el('button', { class: 'btn primary', type: 'button', onclick: async () => { hide3DError(); if (View3D.renderer) { View3D.losses = 0; View3D.recover('leggera'); return; } View3D.failed = false; const v = S.view === '2d' ? '3d' : S.view; S.view = '2d'; await setView(v); } }, View3D.renderer ? 'Riprova in qualità leggera' : 'Riprova'),
         el('button', { class: 'btn', type: 'button', onclick: () => { hide3DError(); setView('2d'); } }, 'Torna alla pianta'))));
   box.hidden = false;
 }
 function hide3DError() { const box = $('#err3d'); if (box) box.hidden = true; }
+
+// ---------- 3D quality levels ----------
+const IS_WEBKIT = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|CriOS|FxiOS|Firefox|Edg\//.test(navigator.userAgent);
+const QUALITY = {
+  alta: { label: 'Alta', pr: 2, shadows: 2048, soft: true, env: true, aa: true, lights: 12 },
+  media: { label: 'Media', pr: 1.5, shadows: 1024, soft: false, env: false, aa: true, lights: 4 },
+  leggera: { label: 'Leggera', pr: 1, shadows: 0, soft: false, env: false, aa: false, lights: 0 },
+};
+function loadQuality() { let q = null; try { q = localStorage.getItem('ps-3d-q'); } catch { } return QUALITY[q] ? q : (IS_WEBKIT ? 'media' : 'alta'); }
+function saveQuality(q) { try { localStorage.setItem('ps-3d-q', q); } catch { } }
 
 // ===================== UI: rail, options, panels, sheets =====================
 const RAIL = ['select', 'wall', 'door', 'window', 'room', 'measure', 'pipe', '|', 'calibrate', 'bg'];
@@ -2763,7 +2845,7 @@ function renderLibrary(body) {
     if (gname) body.append(el('div', { class: 'lib-cat-title' }, gname));
     const grid = el('div', { class: 'lib-grid' });
     for (const c of items) {
-      const cv = el('canvas', { width: '192', height: '192', 'aria-hidden': 'true' });
+      const cv = el('img', { src: thumbURL(c), alt: '', width: '192', height: '192', 'aria-hidden': 'true', draggable: 'false' });
       const card = el('button', { class: 'lib-card', type: 'button', 'aria-pressed': String(S.placing === c.type), title: c.note || c.name }, cv, el('span', { class: 'nm' }, c.name), el('span', { class: 'dm' }, `${Math.round(c.w * 100)}×${Math.round(c.d * 100)} cm`));
       card.addEventListener('click', () => {
         if (S.view !== '2d') { addItemAtCenter(c.type); return; }
@@ -2771,11 +2853,17 @@ function renderLibrary(body) {
         S.placing = S.placing === c.type ? null : c.type; S.sel = null; refreshLibrary(); refreshToolOpts(); requestRender();
         if (S.placing && window.matchMedia('(max-width: 1000px)').matches) togglePanel(false);
       });
-      grid.append(card); drawThumb(cv, c);
+      grid.append(card);
     }
     body.append(grid);
   }
   body.append(el('p', { class: 'note' }, 'Le dimensioni sono indicative e si modificano dopo il posizionamento. Per riunito e OPT verifica gli ingombri sui fogli di installazione del produttore.'));
+}
+const THUMBS = new Map(); let _thumbCv = null;
+function thumbURL(c) { // drawn once per item type: images are far lighter than one canvas per card
+  if (THUMBS.has(c.type)) return THUMBS.get(c.type);
+  _thumbCv ||= document.createElement('canvas'); _thumbCv.width = _thumbCv.height = 192;
+  drawThumb(_thumbCv, c); const u = _thumbCv.toDataURL('image/png'); THUMBS.set(c.type, u); return u;
 }
 function drawThumb(cv, c) {
   const g = cv.getContext('2d'); const S0 = cv.width; g.clearRect(0, 0, S0, S0);
@@ -3104,6 +3192,7 @@ function refreshHud3D() {
   if (S.view === '3d') {
     h.append(optGroup(null, chip([el('span', { html: icon('iso', 16) }), 'Prospettiva'], false, () => View3D.preset('iso')), chip([el('span', { html: icon('top', 16) }), 'Dall\'alto'], false, () => View3D.preset('top')), chip([el('span', { html: icon('side', 16) }), 'Frontale'], false, () => View3D.preset('front'))));
     h.append(optGroup('Muri', chip('Pieni', S.view3d.walls === 'full', () => { S.view3d.walls = 'full'; schedule3D(); refreshHud3D(); }), chip('Tagliati a 1,15 m', S.view3d.walls === 'cut', () => { S.view3d.walls = 'cut'; schedule3D(); refreshHud3D(); })));
+    h.append(optGroup('Qualità', ...Object.entries(QUALITY).map(([k, q]) => chip(q.label, View3D.q === k, () => { View3D.setQuality(k); refreshHud3D(); }))));
     h.append(optGroup(null, chip('Zone di lavoro', S.view3d.zones, () => { S.view3d.zones = !S.view3d.zones; schedule3D(); refreshHud3D(); }), chip('Impianti', S.view3d.utilities, () => { S.view3d.utilities = !S.view3d.utilities; schedule3D(); refreshHud3D(); }), chip('Ombre', S.view3d.shadows, () => { S.view3d.shadows = !S.view3d.shadows; schedule3D(); refreshHud3D(); })));
     hb.append(el('div', { class: 'hint' }, 'Trascina per ruotare · pizzica o scorri per lo zoom · due dita (o ⇧ + trascina) per spostarti · tocca un arredo per selezionarlo e trascinalo'));
   }
