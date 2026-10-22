@@ -348,6 +348,7 @@ function mat(kind, color) {
     case 'rubber': m = new THREE.MeshStandardMaterial({ color: C('#1E2022'), roughness: .9, metalness: 0 }); break;
     case 'ceramic': m = new THREE.MeshStandardMaterial({ color: C(color || '#FAFAF8'), roughness: .12, metalness: 0 }); break;
     case 'glass': m = new THREE.MeshStandardMaterial({ color: C(color || '#BFDDE3'), roughness: .05, metalness: .1, transparent: true, opacity: .22, depthWrite: false, side: THREE.DoubleSide }); break;
+    case 'polycarb': m = new THREE.MeshStandardMaterial({ color: C(color || '#EEF2F3'), roughness: .45, metalness: 0, transparent: true, opacity: .55, depthWrite: false, side: THREE.DoubleSide }); break;
     case 'screen': m = new THREE.MeshStandardMaterial({ color: C('#0E1418'), roughness: .2, metalness: .2, emissive: C('#1b3a48'), emissiveIntensity: .35 }); break;
     case 'emit': m = new THREE.MeshStandardMaterial({ color: C('#FFFFFF'), emissive: C(color || '#FFF7E8'), emissiveIntensity: 1.2 }); break;
     case 'wood': { const t = texFor('wood:' + (color || 'oak')); m = new THREE.MeshStandardMaterial({ map: t, roughness: .6, metalness: 0 }); break; }
@@ -429,6 +430,21 @@ function cabinetBody(g, w, d, h, finish, opts = {}) {
     }
   }
   if (top > 0) add(g, bx(w + .01, top, d + .01), opts.topMat || mat('plastic', '#E9EAE8'), 0, h - top / 2, 0);
+}
+
+// big floor-standing x-ray (used by the CBCT block): base plate + column + head
+function xrayFloorPlan(g, it, d, P) { genericPlan(g, it, d, P); pRect(g, -.15, -d.d / 2 + .05, .3, .32); fs(g, P); pCirc(g, 0, .05, Math.min(d.w, d.d) * .46); det(g, P, true); pLine(g, -.45 * d.w, .05, .45 * d.w, .05); }
+function xrayFloorBuild(it, d) {
+  const g = grp(); const W = mat('plastic', '#F2F3F1'); const sx = d.w / 1.0, sz = d.d / 1.25, sh = d.h / 2.3;
+  add(g, rbx(.8, .04, .9, .02), mat('plastic', '#D5D9DB'), 0, .02, -.05);
+  add(g, rbx(.28, 2.25, .3, .04), W, 0, 1.13, -.45);
+  add(g, rbx(.34, .5, .38, .05), W, 0, 1.3, -.3);
+  add(g, rbx(.95, .1, .26, .05), W, 0, 1.78, .02);
+  add(g, rbx(.18, .38, .22, .04), W, -.40, 1.52, .02);
+  add(g, rbx(.1, .32, .18, .03), mat('plastic', '#3A4246'), .41, 1.52, .02);
+  add(g, rbx(.22, .04, .1, .02), W, 0, 1.3, .12);
+  rod(g, [-.13, 1.25, .12], [-.13, 1.25, .26], .012, mat('chrome')); rod(g, [.13, 1.25, .12], [.13, 1.25, .26], .012, mat('chrome'));
+  g.scale.set(sx, sh, sz); return g;
 }
 
 // ---------- catalog ----------
@@ -572,19 +588,37 @@ const CATALOG = [
   },
   // ---------------- Radiologia ----------------
   {
-    type: 'opt', name: 'OPT panoramico', cat: 'Radiologia', w: 1.0, d: 1.25, h: 2.3, snap: false, note: 'Ingombro indicativo: verifica lo spazio richiesto dal produttore e i requisiti di radioprotezione.',
-    plan(g, it, d, P) { genericPlan(g, it, d, P); pRect(g, -.15, -d.d / 2 + .05, .3, .32); fs(g, P); pCirc(g, 0, .05, Math.min(d.w, d.d) * .46); det(g, P, true); pLine(g, -.45 * d.w, .05, .45 * d.w, .05); },
+    type: 'opt', name: 'OPT panoramico (tipo CS 8100)', short: 'OPT', cat: 'Radiologia', w: .33, d: .9, h: 1.6, snap: true, clear: { w: 1.2, d: 1.4 },
+    note: 'Misure del Carestream CS 8100 (scheda Carestream): 330 × 894 × 1596 mm, 72 kg. Il tratteggio grande è lo spazio minimo di installazione indicato dal produttore (1200 × 1400 mm, altezza locale 2400 mm): tienilo libero per il paziente. La base a pavimento è indicativa. La posizione va concordata con l\'esperto di radioprotezione.',
+    plan(g, it, d, P) {
+      const sx = d.w / .33, sz = d.d / .9, c = CAT_BY_TYPE.opt.clear;
+      // installation space, measured from the back of the unit (against the wall)
+      g.beginPath(); g.rect(-c.w / 2, -d.d / 2, c.w, c.d); g.fillStyle = P.fillSoft; g.globalAlpha = .45; g.fill(); g.globalAlpha = 1;
+      g.strokeStyle = P.detail; g.lineWidth = P.lw * .8; g.setLineDash([P.lw * 6, P.lw * 4]); g.stroke(); g.setLineDash([]);
+      // floor base + column
+      pRRect(g, -d.w / 2, -d.d / 2, d.w, .42 * sz, .02); fs(g, P);
+      pRRect(g, -.1 * sx, -.45 * sz, .2 * sx, .18 * sz, .02); g.fillStyle = P.detail; g.globalAlpha = .35; g.fill(); g.globalAlpha = 1; det(g, P);
+      // overhead arm and rotating C-arm (dashed: above head height)
+      pRect(g, -.1 * sx, -.45 * sz, .2 * sx, .84 * sz); det(g, P, true);
+      pCirc(g, 0, .13 * sz, .34 * Math.min(sx, sz)); det(g, P, true);
+      pRect(g, -.06 * sx, -.2 * sz, .12 * sx, .66 * sz); det(g, P);
+      pCirc(g, 0, .12 * sz, .03); fs(g, P);
+    },
     build(it, d) {
-      const g = grp(); const W = mat('plastic', '#F2F3F1'); const sx = d.w / 1.0, sz = d.d / 1.25, sh = d.h / 2.3;
-      add(g, rbx(.8, .04, .9, .02), mat('plastic', '#D5D9DB'), 0, .02, -.05);
-      add(g, rbx(.28, 2.25, .3, .04), W, 0, 1.13, -.45);
-      add(g, rbx(.34, .5, .38, .05), W, 0, 1.3, -.3);
-      add(g, rbx(.95, .1, .26, .05), W, 0, 1.78, .02);
-      add(g, rbx(.18, .38, .22, .04), W, -.40, 1.52, .02);
-      add(g, rbx(.1, .32, .18, .03), mat('plastic', '#3A4246'), .41, 1.52, .02);
-      add(g, rbx(.22, .04, .1, .02), W, 0, 1.3, .12);
-      rod(g, [-.13, 1.25, .12], [-.13, 1.25, .26], .012, mat('chrome')); rod(g, [.13, 1.25, .12], [.13, 1.25, .26], .012, mat('chrome'));
-      g.scale.set(sx, sh, sz); return g;
+      const g = grp(); const W = mat('plastic', '#F2F3F1'), Gr = mat('plastic', '#C9CED1'), Dk = mat('plastic', '#3A4246');
+      add(g, rbx(.33, .03, .42, .012), Gr, 0, .015, -.24);               // floor base (indicative)
+      add(g, rbx(.2, 1.36, .18, .03), W, 0, .03 + .68, -.36);            // column
+      add(g, rbx(.26, .5, .24, .04), W, 0, 1.2, -.33);                   // telescopic carriage
+      add(g, rbx(.2, .12, .84, .04), W, 0, 1.54, -.03);                  // top arm
+      add(g, cy(.07, .07, .06, 20), Gr, 0, 1.45, .13);                   // rotation joint
+      add(g, rbx(.12, .07, .66, .03), W, 0, 1.39, .13);                  // rotating C-arm
+      add(g, rbx(.2, .3, .16, .04), W, 0, 1.22, -.12);                   // tube head
+      add(g, rbx(.1, .3, .07, .02), Dk, 0, 1.22, .42);                   // sensor
+      add(g, rbx(.3, .035, .2, .012), W, 0, 1.0, -.1);                   // chin-rest bracket
+      add(g, cy(.025, .025, .07, 12), Gr, 0, 1.05, .1);                  // chin rest
+      rod(g, [-.13, 1.0, -.04], [-.13, 1.1, .06], .012, mat('chrome')); rod(g, [.13, 1.0, -.04], [.13, 1.1, .06], .012, mat('chrome'));
+      add(g, bx(.06, .04, .005), mat('screen'), 0, 1.3, -.208);          // control panel
+      g.scale.set(d.w / .33, d.h / 1.6, d.d / .9); return g;
     },
   },
   {
@@ -906,8 +940,8 @@ CATALOG.push(
   {
     type: 'cbct', name: 'CBCT (cone beam)', short: 'CBCT', cat: 'Radiologia', w: 1.3, d: 1.45, h: 2.35, snap: false,
     note: 'Ingombro indicativo: verifica dimensioni, spazio di rotazione e radioprotezione sulla scheda del produttore.',
-    plan(g, it, d, P) { CAT_BY_TYPE.opt ? CAT_BY_TYPE.opt.plan(g, it, d, P) : genericPlan(g, it, d, P); },
-    build(it, d) { return CAT_BY_TYPE.opt.build(it, d); },
+    plan(g, it, d, P) { xrayFloorPlan(g, it, d, P); },
+    build(it, d) { return xrayFloorBuild(it, d); },
   },
   // ---------------- Sterilizzazione ----------------
   {
@@ -1425,9 +1459,33 @@ function zoneConflicts(ph = phase()) {
   return out;
 }
 
+// ---------- balcony closures (glazing on parapets) and canopies ----------
+const CLOSE_KINDS = { vetro: 'Vetrata', 'vetro-griglia': 'Vetrata + griglie', griglia: 'Grigliato' };
+const COVER_KINDS = { vetro: 'Vetro', policarbonato: 'Policarbonato', pannello: 'Pannello coibentato' };
+// new closures belong to the project: hidden in the stato di fatto unless marked as existing
+function closeVisible(w, ph = phase()) { return !!(w.close && w.type === 'parapetto' && wallVisible(w, ph) && (ph !== 'fatto' || w.close.st === 'esistente')); }
+function coverVisible(r, ph = phase()) { return !!(r.cover && (ph !== 'fatto' || r.cover.st === 'esistente')); }
+const closeTop = (w) => w.close?.h ?? S.project.settings.wallH;
+const coverH = (r) => r.cover?.h ?? S.project.settings.wallH;
+function parapetsOf(r, ph = phase()) { // parapets bordering a room (checked on both sides, at three points)
+  const out = [];
+  for (const w of S.project.walls) {
+    if (w.type !== 'parapetto' || !wallVisible(w, ph)) continue;
+    const n = wallNrm(w), off = w.t / 2 + .12; let hit = false;
+    for (const f of [.2, .5, .8]) { const m = { x: lerp(w.a.x, w.b.x, f), y: lerp(w.a.y, w.b.y, f) }; for (const sg of [1, -1]) if (!hit && roomAtPoint(V.add(m, V.mul(n, sg * off)), ph) === r) hit = true; }
+    if (hit) out.push(w);
+  }
+  return out;
+}
+function coverRect(r, ph = phase()) { // canopy = room bounding box + overhang over the parapets
+  const st = computeRooms(ph).rooms.get(r.id); if (!st || st.open || st.shared || !st.bbox) return null;
+  const m = Math.max(.15, ...parapetsOf(r, ph).map((w) => w.t + .06));
+  return { x0: st.bbox.x0 - m, y0: st.bbox.y0 - m, x1: st.bbox.x1 + m, y1: st.bbox.y1 + m };
+}
+
 // ---------- quantities ----------
 function quantities() {
-  const p = S.project; const q = { nuoveMur: 0, nuoveCart: 0, demol: 0, tamp: 0, nuoveAperture: 0, pipes: {}, floors: {} };
+  const p = S.project; const q = { nuoveMur: 0, nuoveCart: 0, demol: 0, tamp: 0, nuoveAperture: 0, vetrate: 0, grigliati: 0, tettoie: 0, pipes: {}, floors: {} };
   for (const w of p.walls) {
     if (w.type === 'parapetto') continue;
     const L = wallLen(w), H = wallH(w);
@@ -1437,6 +1495,11 @@ function quantities() {
     if (w.status === 'demolito') q.demol += L * H - opArea;
     if (w.status !== 'demolito') for (const o of ops) { if (o.status === 'chiuso') q.tamp += o.w * o.h; if (o.status === 'nuovo' && w.status === 'esistente') q.nuoveAperture++; }
   }
+  for (const w of p.walls) {
+    if (!closeVisible(w, 'progetto') || w.close.st === 'esistente') continue;
+    const A = wallLen(w) * Math.max(0, closeTop(w) - wallH(w)); if (w.close.kind === 'griglia') q.grigliati += A; else q.vetrate += A;
+  }
+  for (const r of p.rooms) { if (!coverVisible(r, 'progetto') || r.cover.st === 'esistente') continue; const c = coverRect(r, 'progetto'); if (c) q.tettoie += (c.x1 - c.x0) * (c.y1 - c.y0); }
   for (const pp of p.pipes) { let L = 0; for (let i = 1; i < pp.pts.length; i++) L += V.dist(pp.pts[i - 1], pp.pts[i]); q.pipes[pp.kind] = (q.pipes[pp.kind] || 0) + L; }
   const rr = computeRooms('progetto');
   for (const r of p.rooms) { const st = rr.rooms.get(r.id); if (st && !st.open && !st.shared) q.floors[r.floor || 'gres-chiaro'] = (q.floors[r.floor || 'gres-chiaro'] || 0) + st.area; }
@@ -2209,6 +2272,12 @@ function addOpening(pv, tool) {
 }
 
 // ---------------- the renderer (shared by screen, minimap and export) ----------------
+// a balcony counts as closed when every bordering parapet has glazing/louvres (cached per revision)
+function roomClosed(r, ph) {
+  const key = S.rev + ph; if (roomClosed._k !== key) { roomClosed._k = key; roomClosed._m = new Map(); }
+  if (!roomClosed._m.has(r.id)) { const ws = parapetsOf(r, ph); roomClosed._m.set(r.id, ws.length > 0 && ws.every((w) => closeVisible(w, ph))); }
+  return roomClosed._m.get(r.id);
+}
 function renderPlan(g, view, opt = {}) {
   const p = S.project; const { scale, ox, oy, W, H } = view;
   const ph = opt.phase || phase(); syncCables();
@@ -2254,6 +2323,17 @@ function renderPlan(g, view, opt = {}) {
     for (const q of st.rects) g.fillRect(q.x, q.y, q.w + px * .6, q.h + px * .6);
     if (sel) { g.fillStyle = hexA(PAL.accent, .12); for (const q of st.rects) g.fillRect(q.x, q.y, q.w + px * .6, q.h + px * .6); }
   }
+  // canopies: light diagonal hatch + dashed outline (overhang included)
+  if (!opt.mini) for (const r of p.rooms) {
+    if (!coverVisible(r, ph)) continue; const c = coverRect(r, ph); if (!c) continue;
+    const col = ph === 'confronto' && r.cover.st !== 'esistente' ? PAL.new : (opt.export ? '#3E8FB0' : PAL.water);
+    const cw = c.x1 - c.x0, ch = c.y1 - c.y0;
+    g.save(); g.beginPath(); g.rect(c.x0, c.y0, cw, ch); g.clip();
+    g.strokeStyle = hexA(col, .4); g.lineWidth = px; g.beginPath();
+    for (let s0 = c.x0 - ch; s0 < c.x1; s0 += .16) { g.moveTo(s0, c.y1); g.lineTo(s0 + ch, c.y0); }
+    g.stroke(); g.restore();
+    g.strokeStyle = hexA(col, .9); g.lineWidth = 1.3 * px; g.setLineDash([7 * px, 4 * px]); g.strokeRect(c.x0, c.y0, cw, ch); g.setLineDash([]);
+  }
   // pipes
   if (!opt.mini) for (const pp of p.pipes) {
     if (!pipeVisible(pp, ph) || pp.pts.length < 2) continue;
@@ -2277,6 +2357,12 @@ function renderPlan(g, view, opt = {}) {
     g.fillStyle = fill; g.fill();
     if (outline) { g.strokeStyle = outline; g.lineWidth = px; if (dash) g.setLineDash(dash); g.stroke(); g.setLineDash([]); }
     if (w.type === 'cartongesso' && !opt.mini && ph !== 'confronto') { g.strokeStyle = PAL.wall; g.lineWidth = px * .9; g.beginPath(); g.moveTo(q[0].x, q[0].y); g.lineTo(q[1].x, q[1].y); g.moveTo(q[3].x, q[3].y); g.lineTo(q[2].x, q[2].y); g.stroke(); }
+    if (!opt.mini && closeVisible(w, ph)) { // glazing / louvres above the parapet
+      const k = w.close.kind; const col = ph === 'confronto' && w.close.st !== 'esistente' ? shade(PAL.new, -.2) : (opt.export ? '#3E8FB0' : PAL.water);
+      g.strokeStyle = col; g.lineWidth = 2.4 * px; g.setLineDash(k === 'griglia' ? [4 * px, 3 * px] : []);
+      g.beginPath(); g.moveTo(w.a.x, w.a.y); g.lineTo(w.b.x, w.b.y); g.stroke(); g.setLineDash([]);
+      if (k !== 'vetro') { const L = wallLen(w), d = wallDir(w), n = wallNrm(w), hw = w.t * .45; g.lineWidth = 1.2 * px; g.beginPath(); for (let s0 = .15; s0 < L; s0 += k === 'griglia' ? .12 : .3) { const m = V.add(w.a, V.mul(d, s0)); g.moveTo(m.x - n.x * hw, m.y - n.y * hw); g.lineTo(m.x + n.x * hw, m.y + n.y * hw); } g.stroke(); }
+    }
   };
   // draw existing first, then demolished/new on top in confronto
   for (const w of visWalls.filter((w) => !(ph === 'confronto' && w.status !== 'esistente'))) drawWall(w);
@@ -2346,7 +2432,8 @@ function renderPlan(g, view, opt = {}) {
       const big = clamp(scale * .2, 10.5, 15);
       g.textAlign = 'center'; g.textBaseline = 'middle';
       g.font = fontL(big, 600); g.fillStyle = opt.export ? '#1B2427' : PAL.ink;
-      const area = st && !st.open ? fmtA(st.area) : 'area aperta';
+      let area = st && !st.open ? fmtA(st.area) : 'area aperta';
+      if (coverVisible(r, ph)) area += roomClosed(r, ph) ? ' · chiuso' : ' · coperto';
       const nameW = g.measureText(r.name).width; g.font = fontL(big * .85, 500); const areaW = g.measureText(area).width;
       const bw = Math.max(nameW, areaW) + 12 * K; const bk = big * K;
       g.fillStyle = hexA(opt.export ? '#ffffff' : PAL.sheet, .78); g.fillRect(s.x - bw / 2, s.y - bk - 2 * K, bw, bk * 2.1 + 4 * K);
@@ -2800,7 +2887,7 @@ const View3D = {
       const key = r.floor || 'gres-chiaro'; const size = (FLOORS[key] || FLOORS['gres-chiaro']).size;
       const geo = rectsGeometry(st.rects, 0, size, false);
       const m = new THREE.Mesh(geo, mat('floor', key)); m.receiveShadow = true; this.world.add(m);
-      if (walk) {
+      if (walk && !coverVisible(r, ph)) {
         const cg = rectsGeometry(st.rects, null, 1, true);
         const ceilH = Math.max(...p.walls.filter((w) => wallVisible(w, ph) && w.type !== 'parapetto').map((w) => wallH(w)), p.settings.wallH);
         cg.translate(0, ceilH, 0);
@@ -2812,6 +2899,8 @@ const View3D = {
     const cut = S.view === '3d' && S.view3d.walls === 'cut' ? 1.15 : null;
     const visWalls = p.walls.filter((w) => wallVisible(w, ph));
     visWalls.forEach((w, idx) => this.buildWall(w, visWalls, ph, cut, idx));
+    // canopies (hidden when the walls are cut, so the inside stays visible from above)
+    if (!cut) for (const r of p.rooms) { if (!coverVisible(r, ph)) continue; const c = coverRect(r, ph); if (c) this.buildCover(r, c, ph); }
     // items
     this.itemsG = new THREE.Group(); this.world.add(this.itemsG);
     const conflicts = new Set(zoneConflicts(ph).filter((c) => c.item).map((c) => c.item));
@@ -2874,8 +2963,36 @@ const View3D = {
       if (top < H) piece(s0, s1, top, H);
       if (sill < H) this.buildOpening(o, w, g, ph, H);
     }
+    if (closeVisible(w, ph)) this.buildClosure(w, g, H, cut, ph);
     g.position.set(w.a.x, 0, w.a.y); g.rotation.y = -Math.atan2(d.y, d.x); g.userData.wallId = w.id;
     this.world.add(g);
+  },
+  // glazing / louvres above a balcony parapet, in the wall's local frame (x along the wall)
+  buildClosure(w, g, H, cut, ph) {
+    const L = wallLen(w); const top = cut ? Math.min(cut, closeTop(w)) : closeTop(w); const hh = top - H; if (hh < .06 || L < .05) return;
+    const k = w.close.kind; const isNew = ph === 'confronto' && w.close.st !== 'esistente';
+    const fm = isNew ? mat('lacquer', '#E46A5D') : mat('steel', '#AEB4B7');
+    const n = Math.max(1, Math.ceil(L / 1.0)), bw = L / n;
+    add(g, bx(L, .045, .06), fm, L / 2, top - .0225, 0); add(g, bx(L, .04, .06), fm, L / 2, H + .02, 0);
+    for (let i = 0; i <= n; i++) add(g, bx(.04, hh, .06), fm, clamp(i * bw, .02, L - .02), H + hh / 2, 0);
+    const glass = (y0, y1) => { if (y1 - y0 < .01) return; for (let i = 0; i < n; i++) { const m = add(g, bx(bw - .04, y1 - y0, .012), mat('glass'), i * bw + bw / 2, (y0 + y1) / 2, 0); m.castShadow = false; } };
+    const louvre = (y0, y1) => { if (y1 - y0 < .02) return; const step = .055; for (let y = y0 + step / 2; y < y1 - .005; y += step) add(g, bx(L - .04, .01, .06), mat('steel', '#C4C9CB'), L / 2, y, 0, Math.PI / 5); };
+    const y0 = H + .04, y1 = top - .045;
+    if (k === 'griglia') louvre(y0, y1);
+    else if (k === 'vetro-griglia') { const b = Math.min(.25, (y1 - y0) * .2), t2 = Math.min(.3, (y1 - y0) * .25); louvre(y0, y0 + b); glass(y0 + b + .01, y1 - t2 - .01); louvre(y1 - t2, y1); add(g, bx(L, .03, .06), fm, L / 2, y0 + b, 0); add(g, bx(L, .03, .06), fm, L / 2, y1 - t2, 0); }
+    else glass(y0, y1);
+  },
+  // canopy over a room (balcony): frame + glass, polycarbonate or insulated panel
+  buildCover(r, c, ph) {
+    const k = r.cover.kind, h = coverH(r), w = c.x1 - c.x0, d = c.y1 - c.y0; const isNew = ph === 'confronto' && r.cover.st !== 'esistente';
+    const g = new THREE.Group(); const fm = isNew ? mat('lacquer', '#E46A5D') : mat('steel', '#AEB4B7');
+    const th = k === 'pannello' ? .08 : .02;
+    const m = k === 'vetro' ? mat('glass') : k === 'policarbonato' ? mat('polycarb') : mat('matte', isNew ? '#EDB3AC' : '#D7DADA');
+    const slab = add(g, bx(w, th, d), m, 0, .06 + th / 2, 0); if (k !== 'pannello') slab.castShadow = false;
+    add(g, bx(w, .06, .05), fm, 0, .03, -d / 2 + .025); add(g, bx(w, .06, .05), fm, 0, .03, d / 2 - .025);
+    add(g, bx(.05, .06, d), fm, -w / 2 + .025, .03, 0); add(g, bx(.05, .06, d), fm, w / 2 - .025, .03, 0);
+    if (k !== 'pannello') { const nb = Math.max(1, Math.round(Math.max(w, d) / .9)); for (let i = 1; i < nb; i++) { if (w >= d) add(g, bx(.04, .05, d), fm, -w / 2 + i * w / nb, .03, 0); else add(g, bx(w, .05, .04), fm, 0, .03, -d / 2 + i * d / nb); } }
+    g.position.set((c.x0 + c.x1) / 2, h, (c.y0 + c.y1) / 2); this.world.add(g);
   },
   // opening parts are built in the wall's local frame: x along wall, z = wall normal (plan normal maps to −z? see below)
   buildOpening(o, w, g, ph, H) {
@@ -3395,6 +3512,14 @@ function renderItemProps(body, it) {
     field('Profondità', numInput(d.d, (v) => upd(() => { it.dims = { ...(it.dims || {}), d: Math.max(.02, v) }; }))),
     field('Altezza', numInput(d.h, (v) => upd(() => { it.dims = { ...(it.dims || {}), h: Math.max(.01, v) }; }))),
   ));
+  if (it.dims && ['w', 'd', 'h'].some((k) => it.dims[k] != null && Math.abs(it.dims[k] - c[k]) > .004)) {
+    s1.append(actionRow(el('button', { class: 'btn small', type: 'button', onclick: () => upd(() => { // keep the back edge where it was, so wall-mounted pieces stay against the wall
+      const d0 = dimsOf(it); delete it.dims; const d1 = dimsOf(it);
+      if (c.snap || c.mount === 'wall') { const back = V.rot({ x: 0, y: -1 }, it.rot * DEG); const k = (d0.d - d1.d) / 2; it.x += back.x * k; it.y += back.y * k; }
+      settleOnSurface(it);
+    }) }, icon('undo', 16), `Misure di catalogo (${Math.round(c.w * 100)}×${Math.round(c.d * 100)}×${Math.round(c.h * 100)} cm)`)));
+    if (c.clear && d.w >= c.clear.w * .9 && d.d >= c.clear.d * .9) s1.append(el('div', { class: 'warn-box' }, `Queste misure coincidono con lo spazio di installazione (${Math.round(c.clear.w * 100)}×${Math.round(c.clear.d * 100)} cm), non con l'apparecchio: con le misure di catalogo lo spazio libero resta disegnato tratteggiato.`));
+  }
   const showElev = c.mount === 'wall' || c.mount === 'counter' || elevOf(it) > 0;
   s1.append(el('div', { class: 'grid2' },
     field('Rotazione', numInput(it.rot, (v) => upd(() => { it.rot = ((Math.round(v) % 360) + 360) % 360; }), { unit: '°', factor: 1 })),
@@ -3446,6 +3571,18 @@ function renderWallProps(body, w) {
   s.append(field('Tipo', segPick(Object.entries(WALL_TYPES), w.type, (v) => upd(() => { w.type = v; if (v === 'parapetto' && !w.h) w.h = 1.0; if (v !== 'parapetto' && w.h === 1.0) delete w.h; }))));
   s.append(field('Stato', segPick([['esistente', 'Esistente'], ['demolito', 'Da demolire'], ['nuovo', 'Nuovo']], w.status, (v) => upd(() => { w.status = v; }), (v) => 'st-' + v)));
   body.append(s);
+  if (w.type === 'parapetto') {
+    const sc = el('div', { class: 'sec' }, el('div', { class: 'sec-title' }, 'Chiusura sopra il parapetto'));
+    sc.append(segPick([['', 'Aperto'], ...Object.entries(CLOSE_KINDS)], w.close?.kind || '', (v) => upd(() => { if (!v) delete w.close; else w.close = { st: 'nuovo', ...(w.close || {}), kind: v }; })));
+    if (w.close) {
+      sc.append(el('div', { class: 'grid2' },
+        field('Fino a quota', numInput(closeTop(w), (v) => upd(() => { w.close.h = clamp(v, wallH(w) + .1, 6); }))),
+        field('Stato', segPick([['nuovo', 'Nuova'], ['esistente', 'Esistente']], w.close.st || 'nuovo', (v) => upd(() => { w.close.st = v; }), (v) => 'st-' + v)),
+      ));
+      sc.append(el('div', { class: 'kv' }, 'Superficie chiusa', el('b', {}, fmtA(wallLen(w) * Math.max(0, closeTop(w) - wallH(w))))));
+    }
+    body.append(sc);
+  }
   body.append(el('div', { class: 'sec' }, el('div', { class: 'sec-title' }, 'Colore pareti (entrambi i lati)'), swatchPick(WALL_COLORS, w.color || '#F3F3EF', (v) => upd(() => { w.color = v; }))));
   body.append(actionRow(
     el('button', { class: 'btn', type: 'button', onclick: () => splitWall(w) }, icon('cut', 16), 'Dividi a metà'),
@@ -3497,10 +3634,31 @@ function renderRoomProps(body, r) {
   for (const [k, f] of Object.entries(FLOORS)) grid.append(el('button', { type: 'button', 'aria-pressed': String((r.floor || 'gres-chiaro') === k), onclick: () => upd(() => { r.floor = k; }) }, el('span', { class: 'swatch-dot', style: { background: f.tint, marginRight: '6px' } }), f.name));
   fl.append(grid); body.append(fl);
   if (st && st.shared) body.append(el('div', { class: 'warn-box' }, 'Questa stanza occupa lo stesso spazio di un\'altra: eliminane una o separa con un muro.'));
+  renderBalconySection(body, r, st);
   const items = S.project.items.filter((it) => itemVisible(it) && roomAtPoint(it) === r);
   if (items.length) body.append(el('div', { class: 'sec' }, el('div', { class: 'sec-title' }, 'Contenuto', el('span', { class: 'count' }, String(items.length))), el('div', { class: 'list' }, ...items.map((it) => el('button', { class: 'list-row', type: 'button', onclick: () => { S.sel = { kind: 'item', id: it.id }; selectionChanged(); } }, el('span', { class: 'k' }, it.label || catOf(it).name), el('span', { class: 'v' }, `${Math.round(dimsOf(it).w * 100)}×${Math.round(dimsOf(it).d * 100)}`))))));
   body.append(el('p', { class: 'note' }, 'Trascinare non serve: la stanza segue i muri. Per spostare l\'etichetta crea la stanza toccando il punto dove la vuoi.'));
   body.append(actionRow(delBtn()));
+}
+// balcony: one place to close the parapets (glass / louvres) and add a canopy
+function renderBalconySection(body, r, st) {
+  const ws = parapetsOf(r); if (!ws.length && !r.cover) return;
+  const sec = el('div', { class: 'sec' }, el('div', { class: 'sec-title' }, 'Chiusura e copertura'));
+  const kinds = new Set(ws.map((w) => w.close?.kind || '')); const cur = kinds.size === 1 ? [...kinds][0] : null;
+  if (ws.length) {
+    sec.append(field(`Parapetti (${ws.length})`, segPick([['', 'Aperti'], ...Object.entries(CLOSE_KINDS)], cur, (v) => upd(() => { for (const w of ws) { if (!v) delete w.close; else w.close = { st: r.cover?.st || 'nuovo', ...(w.close || {}), kind: v }; } }))));
+    if (cur === null) sec.append(el('p', { class: 'note' }, 'I parapetti hanno chiusure diverse: scegli un tipo per uniformarle, oppure modificale una per una toccando il parapetto.'));
+  }
+  sec.append(field('Tettoia', segPick([['', 'Nessuna'], ...Object.entries(COVER_KINDS)], r.cover?.kind || '', (v) => upd(() => { if (!v) delete r.cover; else r.cover = { st: 'nuovo', ...(r.cover || {}), kind: v }; }))));
+  if (r.cover) sec.append(el('div', { class: 'grid2' },
+    field('Quota tettoia', numInput(coverH(r), (v) => upd(() => { r.cover.h = clamp(v, 1.8, 6); for (const w of ws) if (w.close) w.close.h = r.cover.h; }))),
+    field('Stato', segPick([['nuovo', 'Nuova'], ['esistente', 'Esistente']], r.cover.st || 'nuovo', (v) => upd(() => { r.cover.st = v; for (const w of ws) if (w.close) w.close.st = v; }), (v) => 'st-' + v)),
+  ));
+  if (ws.length && !(r.cover && ws.every((w) => w.close))) sec.append(actionRow(el('button', { class: 'btn small', type: 'button', onclick: () => upd(() => { r.cover = { st: 'nuovo', kind: 'pannello', ...(r.cover || {}) }; for (const w of ws) w.close = { st: r.cover.st, kind: 'vetro-griglia', h: r.cover.h, ...(w.close || {}) }; }) }, 'Chiudi il balcone (vetrata con griglie + tettoia)')));
+  const c = r.cover ? coverRect(r) : null; let A = 0; for (const w of ws) if (w.close) A += wallLen(w) * Math.max(0, closeTop(w) - wallH(w));
+  if (A || c) sec.append(el('div', { class: 'kv' }, 'Quantità', el('b', {}, [A ? 'chiusure ' + fmtA(A) : '', c ? 'tettoia ' + fmtA((c.x1 - c.x0) * (c.y1 - c.y0)) : ''].filter(Boolean).join(' · '))));
+  sec.append(el('p', { class: 'note' }, 'Con apparecchi che scaldano (compressore, aspiratore) lascia aperture di aerazione in basso e in alto: le griglie servono a questo. In 3D, “Muri tagliati” nasconde la tettoia per guardare dentro. Chiudere un balcone può richiedere un titolo edilizio e il consenso del condominio: verifica con il tecnico.'));
+  body.append(sec);
 }
 function renderPipeProps(body, pp) {
   let L = 0; for (let i = 1; i < pp.pts.length; i++) L += V.dist(pp.pts[i - 1], pp.pts[i]);
@@ -3580,6 +3738,9 @@ function renderBudget(body) {
   if (q.demol > .01) works.push(['demolizione', 'Demolizioni', q.demol, 'm²']);
   if (q.tamp > .01) works.push(['tamponamento', 'Chiusura aperture', q.tamp, 'm²']);
   if (q.nuoveAperture) works.push(['apertura', 'Nuove aperture in muri esistenti', q.nuoveAperture, 'cad.']);
+  if (q.vetrate > .01) works.push(['vetrate', 'Vetrate di chiusura balconi', q.vetrate, 'm²']);
+  if (q.grigliati > .01) works.push(['grigliati', 'Grigliati di aerazione', q.grigliati, 'm²']);
+  if (q.tettoie > .01) works.push(['tettoie', 'Tettoie', q.tettoie, 'm²']);
   for (const [k, L] of Object.entries(q.pipes)) works.push(['tubo_' + k, 'Linea ' + PIPE_KINDS[k][0].toLowerCase(), L, 'm']);
   for (const [k, A] of Object.entries(q.floors)) works.push(['pav_' + k, 'Pavimento ' + FLOORS[k].name.toLowerCase(), A, 'm²']);
   const ws = el('div', { class: 'sec' }, el('div', { class: 'sec-title' }, 'Lavori (quantità dal disegno)'));
@@ -4067,7 +4228,7 @@ function makeZip(files) { // stored (no compression), enough for one or two file
 // ---------- DXF (R12 ASCII, metres, one layer per meaning) ----------
 const DXF_LAYERS = [
   ['MURI_ESISTENTI', 7], ['MURI_DA_DEMOLIRE', 2], ['MURI_NUOVI', 1], ['CARTONGESSO', 8], ['APERTURE', 5], ['ARREDI', 3], ['ATTREZZATURE_DENTALI', 4],
-  ['STANZE', 6], ['QUOTE', 30], ['IMP_ACQUA', 150], ['IMP_SCARICO', 34], ['IMP_ARIA', 130], ['IMP_ASPIRAZIONE', 200], ['IMP_ELETTRICO', 40], ['IMP_DATI', 250], ['ZONE_LAVORO', 9],
+  ['STANZE', 6], ['QUOTE', 30], ['IMP_ACQUA', 150], ['IMP_SCARICO', 34], ['IMP_ARIA', 130], ['IMP_ASPIRAZIONE', 200], ['IMP_ELETTRICO', 40], ['IMP_DATI', 250], ['ZONE_LAVORO', 9], ['CHIUSURE_BALCONI', 4], ['TETTOIE', 5],
 ];
 function exportDXF() {
   const p = S.project; const ph = phase(); const out = [];
@@ -4104,6 +4265,8 @@ function exportDXF() {
       } else if (o.kind === 'scorrevole' || o.kind === 'scomparsa') { const off = o.kind === 'scorrevole' ? V.mul(nn, sw * (h + .03)) : { x: 0, y: 0 }; const sh = V.mul(d, (o.hinge === 'end' ? 1 : -1) * o.w * (o.kind === 'scorrevole' ? .6 : 1)); line('APERTURE', V.add(V.add(a, off), sh), V.add(V.add(b, off), sh)); }
     }
   }
+  for (const w of visWalls) if (closeVisible(w, ph)) { line('CHIUSURE_BALCONI', w.a, w.b); text('CHIUSURE_BALCONI', V.add({ x: (w.a.x + w.b.x) / 2, y: (w.a.y + w.b.y) / 2 }, V.mul(wallNrm(w), -.18)), .08, CLOSE_KINDS[w.close.kind] + ' h ' + nf2.format(closeTop(w))); }
+  for (const r of p.rooms) { if (!coverVisible(r, ph)) continue; const c = coverRect(r, ph); if (!c) continue; poly('TETTOIE', [{ x: c.x0, y: c.y0 }, { x: c.x1, y: c.y0 }, { x: c.x1, y: c.y1 }, { x: c.x0, y: c.y1 }]); line('TETTOIE', { x: c.x0, y: c.y0 }, { x: c.x1, y: c.y1 }); text('TETTOIE', { x: (c.x0 + c.x1) / 2, y: c.y0 + .15 }, .08, 'Tettoia ' + COVER_KINDS[r.cover.kind].toLowerCase() + ' h ' + nf2.format(coverH(r))); }
   for (const it of p.items) {
     if (!itemVisible(it, ph)) continue; const c = catOf(it);
     const layer = DENTAL_CATS.has(c.cat) ? 'ATTREZZATURE_DENTALI' : c.utility ? 'IMP_' + ({ water: 'ACQUA', drain: 'SCARICO', air: 'ARIA', suction: 'ASPIRAZIONE', power: 'ELETTRICO' }[c.util] || 'ELETTRICO') : 'ARREDI';
@@ -4303,6 +4466,6 @@ async function boot() {
   if (S.project._unsaved) { $('#saveState .txt').textContent = 'Modello non salvato'; $('#saveState').title = 'Si salva alla prima modifica. ' + Store.label(); }
   if (!S.projects.length && !SEEDS.templates.length) openWelcome();
 }
-window.__planner = { S, Plan, View3D, commit, setView, setPhase, setTool, Store, parseFirebaseConfig, CAT_BY_TYPE, CATALOG, settleOnSurface, connectToPC, cableNeeds, selectionChanged, elevOf, dimsOf };
+window.__planner = { S, Plan, View3D, commit, setView, setPhase, setTool, Store, parseFirebaseConfig, CAT_BY_TYPE, CATALOG, settleOnSurface, connectToPC, cableNeeds, selectionChanged, elevOf, dimsOf, catOf, computeRooms, zoneConflicts, zonesOf, quantities, roomAtPoint };
 boot();
 
