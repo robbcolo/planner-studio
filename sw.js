@@ -1,11 +1,12 @@
 // Planner Studio Dentistico — offline cache
-const VERSION = 'planner-studio-v5';
+const VERSION = 'planner-studio-v6';
 const SHELL = [
   './', './index.html', './style.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
   './vendor/three.module.min.js', './vendor/OrbitControls.js', './vendor/RoomEnvironment.js', './vendor/RoundedBoxGeometry.js',
   './vendor/USDZExporter.js', './vendor/TextureUtils.js', './vendor/fflate.module.js',
   './vendor/jspdf.umd.min.js', './vendor/pdf.min.js', './vendor/pdf.worker.min.js',
+  './config.js', './vendor/firebase-app-compat.js', './vendor/firebase-auth-compat.js', './vendor/firebase-firestore-compat.js',
 ];
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {

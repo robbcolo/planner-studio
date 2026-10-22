@@ -1578,9 +1578,10 @@ const Store = {
     await this.openIdb();
     if (this.idb) this.mode = 'local';
     const cfg = syncConfig();
-    if (cfg) { try { await FB.connect(cfg); this.mode = 'firebase'; } catch (e) { console.warn(e); toast('Sincronizzazione non disponibile ora: uso i dati di questo dispositivo', 4500); } }
+    if (cfg) { try { await FB.connect(cfg); this.mode = 'firebase'; } catch (e) { console.warn(e); toast('Sincronizzazione non disponibile ora: uso i dati di questo dispositivo', 4500); } return; }
+    if (BUILD === 'github' && cloudConfig()) { try { const u = await FB.restore(); if (u) this.mode = 'firebase'; } catch (e) { console.warn('cloud non disponibile', e); } }
   },
-  label() { return this.mode === 'cloud' ? 'Sincronizzato con il tuo account claude.ai (Mac e iPad)' : this.mode === 'firebase' ? 'Sincronizzato tra i tuoi dispositivi con Firebase' : this.mode === 'local' ? 'Salvato in questo browser' : 'Solo in memoria: esporta il file progetto per conservarlo'; },
+  label() { return this.mode === 'cloud' ? 'Sincronizzato con il tuo account claude.ai' : this.mode === 'firebase' ? (FB.uid ? `Salvato online (${FB.user.email}): uguale su Mac, iPhone e iPad` : 'Sincronizzato tra i tuoi dispositivi con Firebase') : this.mode === 'local' ? 'Salvato solo in questo browser' : 'Solo in memoria: esporta il file progetto per conservarlo'; },
   openIdb() {
     return new Promise((res) => {
       try {
@@ -1688,7 +1689,8 @@ async function offerFile(filename, blob) {
 function setSaveState(st, msg) {
   S.saveState = st; const n = $('#saveState'); if (!n) return;
   n.dataset.state = st;
-  const txt = { saved: 'Salvato', saving: 'Salvataggio…', error: 'Errore di salvataggio', unsaved: 'Modifiche non salvate' }[st];
+  let txt = { saved: 'Salvato', saving: 'Salvataggio…', error: 'Errore di salvataggio', unsaved: 'Modifiche non salvate' }[st];
+  if (st === 'saved' && Store.mode === 'firebase') txt = FB.pending ? (navigator.onLine === false ? 'Salvato qui · offline' : 'Salvato · invio…') : 'Salvato online';
   n.querySelector('.txt').textContent = txt;
   n.title = st === 'error' ? (msg || 'Riprova') : Store.label();
 }
@@ -1700,8 +1702,9 @@ async function saveNow(p = S.project, force = false) {
   const isCur = p === S.project; if (isCur) setSaveState('saving');
   try {
     p.updatedAt = Date.now();
-    if (p._bgDirty) { await Store.saveBg(p.id, S.bgData.get('img:' + p.id) || null); p._bgDirty = false; }
+    if (p._bgDirty) { if (p.bg) p.bg.rev = Date.now(); await Store.saveBg(p.id, S.bgData.get('img:' + p.id) || null); p._bgDirty = false; }
     await Store.save(p);
+    if (p._remoteNewer) { p._remoteNewer = false; toast('Questo progetto era stato modificato anche su un altro dispositivo: è rimasta la versione di qui', 5000); }
     p._unsaved = false;
     if (p === S.project && !p._dirty) setSaveState('saved');
     const row = S.projects.find((x) => x.id === p.id);
@@ -1726,12 +1729,19 @@ async function imageToDataUrl(img, maxChars, maxSide = 3000) {
   return { url: c.toDataURL('image/jpeg', .5), w: c.width, h: c.height, f };
 }
 
-// ===================== optional Firebase sync (GitHub Pages build) =====================
+// ===================== cloud sync (GitHub Pages build) =====================
+// Projects live online in the user's own Firestore space studi/{uid}/planner_* — the same Firebase project and
+// security rules as the Magazzino app (each account reads and writes only its own data). Sign in once per device:
+// every device then sees and edits the same projects, offline edits are queued and sent when the network returns.
 const FIREBASE_VER = '10.12.5';
+// The Firebase web configuration comes from config.js at the site root (window.PLANNER_FIREBASE), filled in only
+// with the owner's consent; without it the app keeps working on this device and explains what is missing.
+const cloudConfig = () => { const c = typeof window !== 'undefined' ? window.PLANNER_FIREBASE : null; return c && c.apiKey && c.projectId ? c : null; };
+const DEVICE_ID = (() => { const mk = () => Math.random().toString(36).slice(2, 10); try { let d = localStorage.getItem('ps-dev'); if (!d) { d = mk(); localStorage.setItem('ps-dev', d); } return d; } catch { return mk(); } })();
 function isTouchDevice() { return window.matchMedia && window.matchMedia('(pointer: coarse)').matches; }
+// legacy mode: a pasted Firebase config + shared "space" code (kept for anyone who set it up before)
 function syncConfig() { try { const v = JSON.parse(localStorage.getItem('ps-sync') || 'null'); return v && v.config && v.space ? v : null; } catch { return null; } }
 function randomSpace() { const a = new Uint8Array(20); crypto.getRandomValues(a); return Array.from(a, (b) => 'abcdefghijkmnpqrstuvwxyz23456789'[b % 32]).join('').replace(/(.{5})(?!$)/g, '$1-'); }
-// accept the snippet as copied from the Firebase console (JS object literal) or plain JSON
 function parseFirebaseConfig(txt) {
   const m = String(txt).match(/\{[\s\S]*\}/); if (!m) throw new Error('Non trovo l\'oggetto firebaseConfig');
   let body = m[0].replace(/\/\/.*$/gm, '').replace(/,\s*}/g, '}');
@@ -1740,103 +1750,211 @@ function parseFirebaseConfig(txt) {
   if (!cfg.apiKey || !cfg.projectId) throw new Error('Mancano apiKey o projectId');
   return cfg;
 }
-const FB = {
-  fs: null, space: null,
-  async connect(sc, verify = false) {
-    if (BUILD === 'artifact') throw new Error('Non disponibile qui');
-    await loadScript(`https://www.gstatic.com/firebasejs/${FIREBASE_VER}/firebase-app-compat.js`);
-    await loadScript(`https://www.gstatic.com/firebasejs/${FIREBASE_VER}/firebase-firestore-compat.js`);
-    const fb = window.firebase; const name = 'planner-studio';
-    const app = fb.apps.find((a) => a.name === name) || fb.initializeApp(sc.config, name);
-    const fs = app.firestore();
-    if (!FB._persist) { FB._persist = true; try { await fs.enablePersistence({ synchronizeTabs: true }); } catch (e) { /* another tab or unsupported */ } }
-    this.fs = fs; this.space = sc.space;
-    if (verify) { // must reach the server: catches a wrong configuration or missing Firestore rules
-      await Promise.race([this.root().collection('projects').limit(1).get({ source: 'server' }), new Promise((_, rej) => setTimeout(() => rej(new Error('Firebase non risponde')), 15000))]);
-    }
-  },
-  root() { return this.fs.collection('planner').doc(this.space); },
-  async list() { const s = await this.root().collection('projects').get(); return s.docs.map((d) => { const x = d.data(); return { id: x.pid || d.id, name: x.name, origin: x.origin || null, updatedAt: x.updatedAt }; }); },
-  async load(pid) { const d = await this.root().collection('projects').doc(pid).get(); return d.exists ? d.data() : null; },
-  async meta(pid) { const d = await this.root().collection('projects').doc(pid).get({ source: 'server' }); return d.exists ? { updatedAt: d.data().updatedAt } : null; },
-  async save(rec) { await this.root().collection('projects').doc(rec.pid).set(rec); },
-  async saveBg(pid, url) { const ref = this.root().collection('bg').doc(pid); if (url) await ref.set({ pid, dataUrl: url }); else await ref.delete(); },
-  async loadBg(pid) { const d = await this.root().collection('bg').doc(pid).get(); return d.exists ? d.data().dataUrl : null; },
-  async remove(pid) { await this.root().collection('projects').doc(pid).delete(); await this.root().collection('bg').doc(pid).delete(); },
-};
+function cloudSkipped() { try { return localStorage.getItem('ps-cloud-skip') === '1'; } catch { return false; } }
+function fbMsg(e) {
+  const c = (e && e.code) || '';
+  return ({
+    'auth/invalid-credential': 'Email o password non corrette.', 'auth/invalid-login-credentials': 'Email o password non corrette.', 'auth/wrong-password': 'Email o password non corrette.', 'auth/user-not-found': 'Email o password non corrette.',
+    'auth/invalid-email': 'L\'indirizzo email non è valido.', 'auth/missing-password': 'Scrivi la password.', 'auth/missing-email': 'Scrivi l\'email.', 'auth/weak-password': 'La password deve avere almeno 6 caratteri.',
+    'auth/email-already-in-use': 'Esiste già un account con questa email: tocca Accedi.', 'auth/too-many-requests': 'Troppi tentativi: riprova tra qualche minuto.',
+    'auth/network-request-failed': 'Serve la connessione a internet per accedere.', 'auth/operation-not-allowed': 'La registrazione con email non è attiva sul progetto Firebase.', 'auth/user-disabled': 'Questo account è stato disattivato.',
+    'no-config': 'Il cloud non è ancora configurato in questa versione dell\'app.',
+    'permission-denied': 'Accesso negato dalle regole di Firestore.', unavailable: 'Server non raggiungibile: riprovo quando torna la rete.', 'resource-exhausted': 'Limite giornaliero di Firebase raggiunto: riprova domani.',
+  })[c] || (e && e.message) || 'Errore sconosciuto';
+}
 
-// turn sync on: connect, copy this device's projects up (newest wins), switch storage
-async function enableSync(configText, space) {
-  let cfg; try { cfg = parseFirebaseConfig(configText); } catch (e) { toast('Configurazione non valida: ' + e.message, 5000); return false; }
-  space = (space || '').trim(); if (space.length < 20 || /[^A-Za-z0-9_-]/.test(space)) { toast('Il codice spazio deve avere almeno 20 caratteri tra lettere, numeri e trattini', 4500); return false; }
-  toast('Mi collego a Firebase…', 6000);
-  try { await FB.connect({ config: cfg, space }, true); }
-  catch (e) { console.error(e); toast('Collegamento non riuscito: controlla configurazione e regole di Firestore (' + (e.code || e.message) + ')', 7000); return false; }
-  // migrate local projects
-  const prevMode = Store.mode; let up = 0;
-  try {
-    const remote = new Map((await FB.list()).map((r) => [r.id, r]));
-    if (prevMode === 'local' || prevMode === 'memory') {
-      const locals = await Store.list();
-      for (const r of locals) {
-        const rem = remote.get(r.id); if (rem && (rem.updatedAt || 0) >= (r.updatedAt || 0)) continue;
-        const p = await Store.load(r.id); if (!p) continue;
-        const bg = p.bg && p.bg.src && p.bg.src.startsWith('img:') ? await Store.loadBg(r.id) : null;
-        Store.mode = 'firebase';
-        if (bg) { const img = await loadImg(bg); const c = await imageToDataUrl(img, 900000); p.bg.mpp *= p.bg.w / c.w; p.bg.w = c.w; p.bg.h = c.h; await FB.saveBg(p.id, c.url); S.bgData.set('img:' + p.id, c.url); S.bgImages.delete('img:' + p.id); }
-        p.updatedAt = r.updatedAt || Date.now(); await Store.save(p); up++;
-        Store.mode = prevMode;
-      }
-    }
-  } catch (e) { console.error(e); Store.mode = prevMode; toast('Copia dei progetti non completata: ' + (e.code || e.message), 6000); return false; }
-  Store.mode = 'firebase';
-  try { localStorage.setItem('ps-sync', JSON.stringify({ config: cfg, space })); } catch { }
-  S.projects = await Store.list();
-  if (S.project && !S.project._unsaved) { S.project._dirty = true; await saveNow(S.project); if (S.project.bg && S.project.bg.src && S.project.bg.src.startsWith('img:')) { S.project._bgDirty = true; await saveNow(S.project, true); } }
-  setSaveState('saved'); refreshPanel(true);
-  toast(up ? `Sincronizzazione attiva: ${up} progett${up === 1 ? 'o copiato' : 'i copiati'} su Firebase` : 'Sincronizzazione attiva', 4500);
-  return true;
+const FB = {
+  app: null, fs: null, auth: null, uid: null, user: null, space: null, pending: 0, unwatch: null, persisted: new Set(),
+  async sdk() {
+    if (BUILD === 'artifact') throw new Error('Non disponibile qui');
+    const base = BUILD === 'github' ? './vendor/' : `https://www.gstatic.com/firebasejs/${FIREBASE_VER}/`;
+    await loadScript(base + 'firebase-app-compat.js');
+    await Promise.all([loadScript(base + 'firebase-auth-compat.js'), loadScript(base + 'firebase-firestore-compat.js')]);
+    return window.firebase;
+  },
+  async initApp(cfg, name) {
+    const fb = await this.sdk();
+    const app = fb.apps.find((a) => a.name === name) || fb.initializeApp(cfg, name);
+    const fs = app.firestore();
+    if (!this.persisted.has(name)) { this.persisted.add(name); try { await fs.enablePersistence({ synchronizeTabs: true }); } catch (e) { console.warn('cache locale di Firestore non disponibile', e); } }
+    this.app = app; this.fs = fs; return app;
+  },
+  // account mode: pick up the session saved on this device (also offline)
+  async restore(timeout = 6000) {
+    const cfg = cloudConfig(); if (!cfg) { const e = new Error('Cloud non ancora configurato'); e.code = 'no-config'; throw e; }
+    const app = await this.initApp(cfg, 'planner-cloud');
+    if (!this.auth) { this.auth = app.auth(); this.auth.languageCode = 'it'; }
+    const u = await new Promise((res) => {
+      let done = false; let off = () => { };
+      const t = setTimeout(() => { if (!done) { done = true; off(); res(this.auth.currentUser || null); } }, timeout);
+      off = this.auth.onAuthStateChanged((x) => { if (done) return; done = true; clearTimeout(t); setTimeout(() => off()); res(x); });
+    });
+    this.setUser(u); return u;
+  },
+  setUser(u) { this.user = u ? { uid: u.uid, email: u.email } : null; this.uid = u ? u.uid : null; if (u) this.space = null; },
+  async ensureAuth() { if (!this.auth) await this.restore(2500); },
+  async signIn(email, pw) { await this.ensureAuth(); const c = await this.auth.signInWithEmailAndPassword(String(email).trim(), pw); this.setUser(c.user); return c.user; },
+  async signUp(email, pw) { await this.ensureAuth(); const c = await this.auth.createUserWithEmailAndPassword(String(email).trim(), pw); this.setUser(c.user); return c.user; },
+  async resetPassword(email) { await this.ensureAuth(); await this.auth.sendPasswordResetEmail(String(email).trim()); },
+  async signOut() { this.stopWatch(); try { await this.auth?.signOut(); } catch (e) { console.warn(e); } this.setUser(null); },
+  // legacy mode
+  async connect(sc, verify = false) {
+    await this.initApp(sc.config, 'planner-studio'); this.space = sc.space; this.uid = null;
+    if (verify) await Promise.race([this.colP().limit(1).get({ source: 'server' }), new Promise((_, rej) => setTimeout(() => rej(new Error('Firebase non risponde')), 15000))]);
+  },
+  root() { return this.uid ? this.fs.collection('studi').doc(this.uid) : this.fs.collection('planner').doc(this.space); },
+  colP() { return this.root().collection(this.uid ? 'planner_progetti' : 'projects'); },
+  colB() { return this.root().collection(this.uid ? 'planner_sfondi' : 'bg'); },
+  // writes land in the local cache at once; the server ack can wait for the network, so don't block the editor on it
+  track(pr) {
+    this.pending++; cloudBadge();
+    pr.then(() => { this.err = null; }, (e) => { this.err = e; console.error(e); toast('Salvataggio online non riuscito: ' + fbMsg(e), 6000); if (S.project) setSaveState('error', fbMsg(e)); })
+      .finally(() => { this.pending--; cloudBadge(); });
+    return Promise.race([pr, new Promise((r) => setTimeout(r, 1500))]);
+  },
+  async list() { const s = await this.colP().get(); return s.docs.map((d) => { const x = d.data(); return { id: x.pid || d.id, name: x.name, origin: x.origin || null, updatedAt: x.updatedAt }; }); },
+  async load(pid) { const d = await this.colP().doc(pid).get(); return d.exists ? d.data() : null; },
+  async meta(pid) { const d = await this.colP().doc(pid).get({ source: 'server' }); return d.exists ? { updatedAt: d.data().updatedAt } : null; },
+  save(rec) { return this.track(this.colP().doc(rec.pid).set({ ...rec, dev: DEVICE_ID })); },
+  saveBg(pid, url) { const ref = this.colB().doc(pid); return this.track(url ? ref.set({ pid, dataUrl: url }) : ref.delete()); },
+  async loadBg(pid) { const d = await this.colB().doc(pid).get(); return d.exists ? d.data().dataUrl : null; },
+  async remove(pid) { await Promise.all([this.track(this.colP().doc(pid).delete()), this.track(this.colB().doc(pid).delete())]); },
+  // live updates of the open project from the other devices
+  watch(pid) {
+    this.stopWatch(); if (!this.fs || !pid) return;
+    try {
+      this.unwatch = this.colP().doc(pid).onSnapshot((snap) => {
+        if (!snap.exists || (snap.metadata && snap.metadata.hasPendingWrites)) return;
+        const x = snap.data(); if (!x || x.dev === DEVICE_ID) return;
+        onRemoteChange(pid, x);
+      }, (e) => console.warn('aggiornamenti dal cloud', e));
+    } catch (e) { console.warn(e); }
+  },
+  stopWatch() { if (this.unwatch) { try { this.unwatch(); } catch { } this.unwatch = null; } },
+};
+function cloudBadge() { if (S.project && S.saveState === 'saved') setSaveState('saved'); }
+
+// a newer version of the open project arrived from another device: reload it unless there are unsaved edits here
+async function onRemoteChange(pid, x) {
+  const cur = S.project; if (!cur || cur.id !== pid || cur._unsaved) return;
+  if ((x.updatedAt || 0) <= (cur.updatedAt || 0) + 300) return;
+  if (cur._dirty || cur._bgDirty || S.saveState === 'saving' || S.placing || Plan.drag) { cur._remoteNewer = true; return; }
+  await reloadCurrent(normalizeProject(JSON.parse(x.json)), 'Aggiornato con le modifiche fatte su un altro dispositivo');
 }
-async function disableSync() {
-  try { localStorage.removeItem('ps-sync'); } catch { }
-  Store.mode = Store.idb ? 'local' : 'memory'; S.projects = await Store.list();
-  if (S.project) { S.project._dirty = true; await saveNow(S.project); }
-  refreshPanel(true); toast('Sincronizzazione disattivata: da ora salvo solo su questo dispositivo', 4500);
+async function reloadCurrent(p, msg) {
+  const cur = S.project; const view = { scale: Plan.scale, ox: Plan.ox, oy: Plan.oy }; const tab = S.tab; const sel = S.sel;
+  if (p.bg && p.bg.src && p.bg.src.startsWith('img:') && (!cur.bg || cur.bg.rev !== p.bg.rev)) { S.bgData.delete(p.bg.src); S.bgImages.delete(p.bg.src); }
+  await openProject(p); Object.assign(Plan, view); if (sel && findSel(sel)) { S.sel = sel; selectionChanged(); } if (tab) setTab(tab); requestRender();
+  if (msg) toast(msg);
 }
-// when the app comes back to the foreground, pick up changes made on the other device
+// when the app comes back to the foreground, check the server too (the live listener may have been paused)
 async function refreshFromRemote() {
   if (Store.mode !== 'firebase' || !S.project || S.project._unsaved || S.project._dirty || S.saveState === 'saving') return;
   try {
     const m = await FB.meta(S.project.id); if (!m) return;
-    if ((m.updatedAt || 0) > (S.project.updatedAt || 0) + 500) {
-      const view = { scale: Plan.scale, ox: Plan.ox, oy: Plan.oy };
-      const p = await Store.load(S.project.id); if (!p) return;
-      S.bgData.delete('img:' + p.id); await openProject(p); Object.assign(Plan, view); requestRender();
-      toast('Progetto aggiornato con le modifiche fatte sull\'altro dispositivo');
-    }
+    if ((m.updatedAt || 0) > (S.project.updatedAt || 0) + 300) { const p = await Store.load(S.project.id); if (p) await reloadCurrent(p, 'Aggiornato con le modifiche fatte su un altro dispositivo'); }
   } catch (e) { console.warn(e); }
 }
 
+// copy this device's projects up (the newest version wins), used when the cloud is switched on
+async function copyLocalToCloud(prevMode) {
+  let up = 0; if (prevMode !== 'local' && prevMode !== 'memory') return 0;
+  const remote = new Map((await FB.list()).map((r) => [r.id, r]));
+  Store.mode = prevMode; const locals = await Store.list();
+  for (const r of locals) {
+    const rem = remote.get(r.id); if (rem && (rem.updatedAt || 0) >= (r.updatedAt || 0)) continue;
+    Store.mode = prevMode; const p = await Store.load(r.id); if (!p) continue;
+    const bg = p.bg && p.bg.src && p.bg.src.startsWith('img:') ? await Store.loadBg(r.id) : null;
+    Store.mode = 'firebase';
+    if (bg) { const img = await loadImg(bg); const c = await imageToDataUrl(img, 900000); p.bg.mpp *= p.bg.w / c.w; p.bg.w = c.w; p.bg.h = c.h; p.bg.rev = Date.now(); await FB.saveBg(p.id, c.url); if (S.project && S.project.id === p.id) { S.project.bg = { ...p.bg }; } S.bgData.set('img:' + p.id, c.url); S.bgImages.delete('img:' + p.id); }
+    p.updatedAt = r.updatedAt || Date.now(); await Store.save(p); up++;
+  }
+  Store.mode = 'firebase'; return up;
+}
+// signed in (or session restored): switch storage to the cloud and bring this device's work along
+async function goCloud() {
+  const prevMode = Store.mode === 'firebase' ? 'local' : Store.mode; let up = 0;
+  try { up = await copyLocalToCloud(prevMode); }
+  catch (e) { console.error(e); Store.mode = prevMode; toast('Copia dei progetti nel cloud non completata: ' + fbMsg(e), 6000); return false; }
+  Store.mode = 'firebase'; try { localStorage.removeItem('ps-cloud-skip'); } catch { }
+  try { S.projects = await Store.list(); } catch (e) { console.warn(e); }
+  const cur = S.project;
+  if (cur && !cur._unsaved) { cur._dirty = true; await saveNow(cur); FB.watch(cur.id); }
+  else { const pick = [...S.projects].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]; if (pick) await openProjectById(pick.id); }
+  setSaveState(S.project && S.project._unsaved ? 'unsaved' : 'saved'); refreshPanel(true);
+  toast(up ? `Progetti nel cloud: ${up} copiat${up === 1 ? 'o' : 'i'} da questo dispositivo` : 'Progetti nel cloud: sono gli stessi su tutti i tuoi dispositivi', 4500);
+  return true;
+}
+async function leaveCloud() {
+  const cur = S.project; await FB.signOut();
+  Store.mode = Store.idb ? 'local' : 'memory'; try { S.projects = await Store.list(); } catch { S.projects = []; }
+  if (cur && !cur._unsaved) { cur._dirty = true; if (cur.bg && cur.bg.src && cur.bg.src.startsWith('img:')) cur._bgDirty = true; await saveNow(cur); }
+  refreshPanel(true); toast('Sei uscito: i progetti restano nel cloud. Su questo dispositivo resta una copia di quello aperto.', 5000);
+}
+
+// ---------- sign-in sheet ----------
+function openLogin(opts = {}) {
+  openSheet((sh) => {
+    sh.append(sheetHead('I tuoi progetti su tutti i dispositivi', 'Accedi una volta su Mac, iPhone e iPad: i progetti si salvano online e restano sempre uguali.'));
+    const em = el('input', { class: 'inp', type: 'email', id: 'cloudEmail', autocomplete: 'username', autocapitalize: 'off', spellcheck: 'false', placeholder: 'nome@esempio.it' });
+    const pw = el('input', { class: 'inp', type: 'password', id: 'cloudPw', autocomplete: 'current-password', placeholder: 'Password' });
+    const msg = el('div', { class: 'warn-box bad', hidden: true });
+    for (const i of [em, pw]) i.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') go('in'); });
+    const busy = (b) => sh.querySelectorAll('button').forEach((x) => { x.disabled = b; });
+    const show = (t, ok) => { msg.hidden = !t; msg.className = ok ? 'ok-box' : 'warn-box bad'; msg.textContent = t || ''; };
+    async function go(kind) {
+      show('');
+      if (kind !== 'reset' && (!em.value.trim() || !pw.value)) { show('Scrivi email e password.'); return; }
+      if (kind === 'reset' && !em.value.trim()) { show('Scrivi la tua email, poi tocca di nuovo “Password dimenticata”.'); em.focus(); return; }
+      busy(true);
+      try {
+        if (kind === 'reset') { await FB.resetPassword(em.value); show('Ti ho mandato un\'email per scegliere una nuova password.', true); busy(false); return; }
+        if (kind === 'up') { pw.setAttribute('autocomplete', 'new-password'); await FB.signUp(em.value, pw.value); } else await FB.signIn(em.value, pw.value);
+        closeSheet(); toast('Accesso eseguito: preparo i progetti…', 3000);
+        await goCloud();
+      } catch (e) { console.warn(e); show(fbMsg(e)); busy(false); }
+    }
+    sh.append(field('Email', em), field('Password', pw), msg);
+    sh.append(el('div', { class: 'row', style: { justifyContent: 'flex-end', flexWrap: 'wrap' } },
+      el('button', { class: 'btn', type: 'button', onclick: () => go('reset') }, 'Password dimenticata'),
+      el('button', { class: 'btn', type: 'button', onclick: () => go('up') }, 'Crea account'),
+      el('button', { class: 'btn primary', type: 'button', onclick: () => go('in') }, 'Accedi'),
+    ));
+    sh.append(el('p', { class: 'note' }, 'Usa lo stesso account su tutti i dispositivi; la prima volta tocca Crea account. I progetti sono visibili solo a chi entra con questo account. Il portachiavi di iCloud può ricordare la password per te.'));
+    if (opts.first) sh.append(el('div', { class: 'row' }, el('button', { class: 'btn small', type: 'button', onclick: () => { try { localStorage.setItem('ps-cloud-skip', '1'); } catch { } closeSheet(); if (opts.then) opts.then(); } }, 'Usa solo questo dispositivo')));
+    setTimeout(() => (isTouchDevice() ? null : em.focus()), 50);
+  });
+}
+
+// ---------- Progetto tab ----------
 function renderSyncSection(body) {
   if (Store.mode === 'cloud' || BUILD === 'artifact') return;
-  const sc = syncConfig();
-  const sec = el('div', { class: 'sec' }, el('div', { class: 'sec-title' }, 'Sincronizzazione Mac ↔ iPad'));
-  if (Store.mode === 'firebase' && sc) {
-    const code = el('input', { class: 'inp', type: 'text', readonly: true, value: sc.space, id: 'syncCode', 'aria-label': 'Codice spazio' });
-    sec.append(el('div', { class: 'ok-box' }, `Attiva sul progetto Firebase “${sc.config.projectId}”. I progetti si aggiornano quando riapri l'app sull'altro dispositivo.`));
-    sec.append(field('Codice spazio (usa lo stesso sull\'altro dispositivo)', el('div', { class: 'row' }, el('div', { style: { flex: '1' } }, code), el('button', { class: 'btn small', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(sc.space); toast('Codice copiato'); } catch { code.select(); } } }, 'Copia'))));
-    sec.append(el('div', { class: 'row' }, el('button', { class: 'btn small', type: 'button', onclick: () => refreshFromRemote().then(() => toast('Controllo completato')) }, 'Controlla aggiornamenti'), el('button', { class: 'btn small danger', type: 'button', onclick: () => confirmSheet('Disattivare la sincronizzazione?', 'I progetti restano su Firebase; questo dispositivo torna a salvare solo in locale.', 'Disattiva', disableSync) }, 'Disattiva')));
+  const sec = el('div', { class: 'sec' }, el('div', { class: 'sec-title' }, 'Cloud: Mac, iPhone e iPad'));
+  const legacy = syncConfig();
+  if (Store.mode === 'firebase' && FB.uid) {
+    sec.append(el('div', { class: 'ok-box' }, `Connesso come ${FB.user.email}. Ogni modifica si salva online e compare sugli altri dispositivi in pochi secondi; senza rete salva qui e invia appena torna la connessione.`));
+    if (FB.pending) sec.append(el('div', { class: 'kv' }, 'Modifiche in invio', el('b', {}, String(FB.pending))));
+    sec.append(el('div', { class: 'row' },
+      el('button', { class: 'btn small', type: 'button', onclick: () => refreshFromRemote().then(() => toast('Controllo completato')) }, 'Controlla aggiornamenti'),
+      el('button', { class: 'btn small danger', type: 'button', onclick: () => confirmSheet('Uscire dall\'account?', 'I progetti restano nel cloud e li ritrovi accedendo di nuovo. Su questo dispositivo resta una copia del progetto aperto.', 'Esci', leaveCloud) }, 'Esci')));
+  } else if (Store.mode === 'firebase' && legacy) {
+    sec.append(el('div', { class: 'ok-box' }, `Sincronizzazione con codice spazio attiva sul progetto Firebase “${legacy.config.projectId}”.`));
+    sec.append(el('div', { class: 'row' },
+      el('button', { class: 'btn small', type: 'button', onclick: () => refreshFromRemote().then(() => toast('Controllo completato')) }, 'Controlla aggiornamenti'),
+      el('button', { class: 'btn small danger', type: 'button', onclick: () => confirmSheet('Disattivare la sincronizzazione con codice?', 'I progetti restano su Firebase; questo dispositivo torna a salvare solo in locale. Poi potrai accedere con l\'account.', 'Disattiva', disableSync) }, 'Disattiva')));
+  } else if (!cloudConfig()) {
+    sec.append(el('p', { class: 'note' }, 'Il cloud non è ancora configurato in questa versione dell\'app: per ora i progetti restano su questo dispositivo. Usa “Esporta file progetto” per portarli altrove.'));
   } else {
-    const ta = el('textarea', { class: 'inp', rows: '5', id: 'fbConfig', placeholder: 'const firebaseConfig = {\n  apiKey: "…",\n  authDomain: "…",\n  projectId: "…",\n  …\n};', style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '12px' } }, sc ? JSON.stringify(sc.config, null, 2) : '');
-    const sp = el('input', { class: 'inp', type: 'text', id: 'fbSpace', value: sc?.space || randomSpace(), 'aria-label': 'Codice spazio' });
-    ta.addEventListener('keydown', (e) => e.stopPropagation()); sp.addEventListener('keydown', (e) => e.stopPropagation());
-    sec.append(el('p', { class: 'note' }, 'Per avere gli stessi progetti su Mac e iPad incolla la configurazione web del tuo progetto Firebase (puoi riusare quello del magazzino) e scegli un codice spazio. Sull\'altro dispositivo incolla la stessa configurazione e lo stesso codice.'));
-    sec.append(field('Configurazione Firebase', ta));
-    sec.append(field('Codice spazio', el('div', { class: 'row' }, el('div', { style: { flex: '1' } }, sp), el('button', { class: 'btn small', type: 'button', onclick: () => { sp.value = randomSpace(); } }, 'Genera'))));
-    sec.append(el('button', { class: 'btn primary', type: 'button', onclick: async (e) => { const btn = e.currentTarget; btn.disabled = true; const ok = await enableSync(ta.value, sp.value); if (!ok) btn.disabled = false; } }, 'Attiva sincronizzazione'));
-    sec.append(el('p', { class: 'note' }, 'Il codice funziona come una password: chi ha sia la configurazione sia il codice può leggere e modificare i progetti. Le regole Firestore da aggiungere sono nel file README del repository.'));
+    sec.append(el('p', { class: 'note' }, 'Ora i progetti sono salvati solo su questo dispositivo. Accedi per averli uguali su Mac, iPhone e iPad: quelli che hai qui vengono copiati online.'));
+    sec.append(el('button', { class: 'btn primary', type: 'button', onclick: () => openLogin() }, 'Accedi o crea un account'));
   }
   body.append(sec);
+}
+async function disableSync() {
+  try { localStorage.removeItem('ps-sync'); } catch { }
+  FB.stopWatch(); Store.mode = Store.idb ? 'local' : 'memory'; S.projects = await Store.list();
+  if (S.project) { S.project._dirty = true; await saveNow(S.project); }
+  refreshPanel(true); toast('Sincronizzazione con codice disattivata', 4500);
 }
 
 // ===================== 2D plan editor =====================
@@ -4348,6 +4466,7 @@ async function openProject(p) {
   updateUndoButtons(); setTool('select'); Plan.fit(); refreshPanel(true); refreshHud3D();
   if (S.view === 'walk') { View3D.rebuild(); View3D.enterWalk(); }
   else if (S.view === '3d' && View3D.ready) { View3D.rebuild(); View3D.preset('iso'); View3D._presetDone = true; }
+  if (Store.mode === 'firebase') FB.watch(p.id); else FB.stopWatch();
 }
 async function openProjectById(id) {
   try { const p = await Store.load(id); if (!p) { toast('Progetto non trovato'); return; } await openProject(p); }
@@ -4367,7 +4486,7 @@ function openWelcome() {
       big('Carica una planimetria', 'PDF o immagine: la calibri con una misura nota e ricalchi i muri.', () => newEmptyProject(true)),
       big('Inizia da zero', 'Disegna i muri a mano.', () => newEmptyProject(false)),
     ));
-    if (BUILD !== 'artifact' && Store.mode !== 'firebase') sh.append(el('p', { class: 'note' }, 'Hai già attivato la sincronizzazione sull\'altro dispositivo? Vai in Progetto › Sincronizzazione e inserisci la stessa configurazione e lo stesso codice.'));
+    if (BUILD !== 'artifact' && Store.mode !== 'firebase' && cloudConfig()) sh.append(el('div', { class: 'row' }, el('span', { class: 'note', style: { flex: '1' } }, 'Hai già dei progetti su un altro dispositivo?'), el('button', { class: 'btn small', type: 'button', onclick: () => { closeSheet(); openLogin(); } }, 'Accedi')));
   });
 }
 function openTemplate(tplId, save = false) {
@@ -4464,8 +4583,12 @@ async function boot() {
   if (pick && S.project._unsaved && S.undo.length === 0) await openProjectById(pick.id);
   else setSaveState(S.project._unsaved ? 'unsaved' : 'saved');
   if (S.project._unsaved) { $('#saveState .txt').textContent = 'Modello non salvato'; $('#saveState').title = 'Si salva alla prima modifica. ' + Store.label(); }
-  if (!S.projects.length && !SEEDS.templates.length) openWelcome();
+  const welcome = () => { if (!S.projects.length && !SEEDS.templates.length) openWelcome(); };
+  if (BUILD === 'github' && cloudConfig() && Store.mode !== 'firebase' && !syncConfig() && !cloudSkipped()) openLogin({ first: true, then: welcome });
+  else welcome();
+  window.addEventListener('online', () => { cloudBadge(); refreshFromRemote(); });
+  window.addEventListener('offline', () => cloudBadge());
 }
-window.__planner = { S, Plan, View3D, commit, setView, setPhase, setTool, Store, parseFirebaseConfig, CAT_BY_TYPE, CATALOG, settleOnSurface, connectToPC, cableNeeds, selectionChanged, elevOf, dimsOf, catOf, computeRooms, zoneConflicts, zonesOf, quantities, roomAtPoint };
+window.__planner = { S, Plan, View3D, commit, setView, setPhase, setTool, Store, parseFirebaseConfig, CAT_BY_TYPE, CATALOG, settleOnSurface, connectToPC, cableNeeds, selectionChanged, elevOf, dimsOf, catOf, computeRooms, zoneConflicts, zonesOf, quantities, roomAtPoint, FB, openLogin, goCloud };
 boot();
 

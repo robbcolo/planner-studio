@@ -16,23 +16,22 @@ Le planimetrie dei tuoi locali **non sono nel repository**, che è pubblico: arr
 - **iPad**: apri il link in Safari › Condividi › *Aggiungi alla schermata Home*. Dopo la prima apertura funziona anche offline.
 - **Mac**: in Safari *File › Aggiungi al Dock*, oppure in Chrome l'icona di installazione nella barra degli indirizzi.
 
-## Sincronizzazione Mac ↔ iPad (facoltativa)
+## Progetti nel cloud (Mac, iPhone, iPad)
 
-Senza sincronizzazione ogni dispositivo salva i progetti per conto suo (si possono spostare con *Esporta file progetto* / *Importa*). Per avere gli stessi progetti ovunque si usa Firebase Firestore, anche lo stesso progetto Firebase del magazzino.
+I progetti si salvano online con Firebase Firestore: accedi una volta su ogni dispositivo con email e password e ritrovi sempre l'ultima versione. Le modifiche fatte su un dispositivo compaiono sugli altri in pochi secondi; senza rete l'app salva sul dispositivo e invia tutto quando la connessione torna.
 
-1. Nella console Firebase › Impostazioni progetto › *Le tue app* copia l'oggetto `firebaseConfig` dell'app web (se non c'è, aggiungi un'app web).
-2. In **Firestore › Regole** aggiungi questo blocco **dentro** `match /databases/{database}/documents { … }`, senza cancellare le regole che usi già per le altre app:
+1. In `config.js` c'è la configurazione web del progetto Firebase (`window.PLANNER_FIREBASE`). Questi valori non sono segreti: i dati li proteggono l'accesso e le regole.
+2. Nel progetto Firebase servono **Authentication › Email/Password** attivo e queste regole di Firestore (le stesse dell'app Magazzino):
 
    ```
-   match /planner/{space}/{document=**} {
-     allow read, write: if space.size() >= 20;
+   match /studi/{uid}/{document=**} {
+     allow read, write: if request.auth != null && request.auth.uid == uid;
    }
    ```
 
-3. Nell'app: tab **Progetto › Sincronizzazione Mac ↔ iPad**, incolla la configurazione, lascia il codice spazio generato e premi *Attiva sincronizzazione*. I progetti già presenti sul dispositivo vengono copiati su Firebase.
-4. Sull'altro dispositivo incolla la **stessa configurazione** e lo **stesso codice spazio**.
+3. Nell'app: alla prima apertura (o in **Progetto › Cloud**) accedi o tocca *Crea account*. I progetti già presenti sul dispositivo vengono copiati online.
 
-Il codice spazio fa da password: chi conosce sia la configurazione sia il codice può leggere e modificare i progetti. Le planimetrie (fino a circa 900 KB ciascuna) vengono salvate in Firestore accanto ai progetti.
+I progetti stanno in `studi/<id account>/planner_progetti`, le planimetrie di sfondo (fino a circa 900 KB ciascuna) in `studi/<id account>/planner_sfondi`. Se `config.js` è vuoto, l'app salva solo sul dispositivo.
 
 ## File
 
@@ -43,9 +42,10 @@ Il codice spazio fa da password: chi conosce sia la configurazione sia il codice
 | `app.js` | tutta la logica: editor 2D, vista 3D e passeggiata, catalogo, salvataggio, export |
 | `sw.js` | cache per l'uso offline |
 | `manifest.webmanifest`, `icons/` | installazione come app |
-| `vendor/` | librerie ospitate nel repository: three.js 0.169 (3D, controlli, esportazione USDZ), jsPDF 2.5.1 (PDF), pdf.js 3.11 (lettura planimetrie PDF) |
+| `config.js` | configurazione Firebase per il cloud dei progetti |
+| `vendor/` | librerie ospitate nel repository: three.js 0.169 (3D, controlli, esportazione USDZ), jsPDF 2.5.1 (PDF), pdf.js 3.11 (lettura planimetrie PDF), Firebase 10.12 (cloud) |
 
-Solo Firebase 10.12 viene caricato da internet, e solo se attivi la sincronizzazione. Tutto il resto funziona anche offline.
+Tutte le librerie sono nel repository: l'app si apre anche offline.
 
 ## Se la vista 3D non parte
 
