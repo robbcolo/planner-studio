@@ -281,6 +281,37 @@ function drawPaintingTexture(seed, S = 256) {
   g.globalAlpha = 1; return c;
 }
 
+function drawDiplomaTexture(seed, S = 256) { // generic framed certificate: lines instead of readable text
+  const c = document.createElement('canvas'); c.width = S; c.height = Math.round(S * .74); const g = c.getContext('2d'); const r = rng(seed);
+  g.fillStyle = '#F7F2E4'; g.fillRect(0, 0, c.width, c.height);
+  g.strokeStyle = '#B8A06A'; g.lineWidth = 3; g.strokeRect(9, 9, c.width - 18, c.height - 18); g.lineWidth = 1; g.strokeRect(15, 15, c.width - 30, c.height - 30);
+  g.fillStyle = '#5B5246'; g.fillRect(c.width * .3, 34, c.width * .4, 9);
+  g.fillStyle = '#8A8072';
+  for (let i = 0; i < 6; i++) { const w = c.width * (.45 + r() * .3); g.fillRect((c.width - w) / 2, 62 + i * 14, w, 4); }
+  g.fillStyle = '#7A2E3A'; g.beginPath(); g.arc(c.width * .78, c.height * .78, 14, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#C79A3A'; g.beginPath(); g.arc(c.width * .78, c.height * .78, 8, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#5B5246'; g.fillRect(c.width * .14, c.height * .8, c.width * .28, 2);
+  return c;
+}
+function drawClockTexture(S = 256) {
+  const c = document.createElement('canvas'); c.width = c.height = S; const g = c.getContext('2d'); const R = S / 2;
+  g.fillStyle = '#FBFBF8'; g.beginPath(); g.arc(R, R, R - 2, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#2B2E31'; g.lineCap = 'round';
+  for (let i = 0; i < 60; i++) { const a = i / 60 * Math.PI * 2, big = i % 5 === 0; g.lineWidth = big ? 6 : 2; g.beginPath(); g.moveTo(R + Math.cos(a) * (R - 12), R + Math.sin(a) * (R - 12)); g.lineTo(R + Math.cos(a) * (R - (big ? 34 : 22)), R + Math.sin(a) * (R - (big ? 34 : 22))); g.stroke(); }
+  g.lineWidth = 9; g.beginPath(); g.moveTo(R, R); g.lineTo(R + Math.cos(-2.1) * R * .45, R + Math.sin(-2.1) * R * .45); g.stroke();
+  g.lineWidth = 6; g.beginPath(); g.moveTo(R, R); g.lineTo(R + Math.cos(-.6) * R * .7, R + Math.sin(-.6) * R * .7); g.stroke();
+  g.strokeStyle = '#BF3628'; g.lineWidth = 2; g.beginPath(); g.moveTo(R, R); g.lineTo(R + Math.cos(1.2) * R * .75, R + Math.sin(1.2) * R * .75); g.stroke();
+  return c;
+}
+function drawKeyboardTexture(S = 256) {
+  const c = document.createElement('canvas'); c.width = S; c.height = Math.round(S * .33); const g = c.getContext('2d');
+  g.fillStyle = '#2F3336'; g.fillRect(0, 0, c.width, c.height); g.fillStyle = '#4A5054';
+  const cols = 15, rows = 5, kw = (c.width - 10) / cols, kh = (c.height - 8) / rows;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) { if (j === 4 && i > 3 && i < 11) continue; g.fillRect(5 + i * kw + 1, 4 + j * kh + 1, kw - 2, kh - 2); }
+  g.fillRect(5 + 4 * kw + 1, 4 + 4 * kh + 1, kw * 7 - 2, kh - 2);
+  return c;
+}
+
 // ---------- three.js material cache (THREE is loaded lazily) ----------
 let THREE = null, OrbitControls = null, RoomEnvironment = null, RoundedBoxGeometry = null;
 const MATS = new Map();
@@ -291,6 +322,9 @@ function texFor(key, repeatMeters) {
   if (key.startsWith('floor:')) canvas = drawFloorTexture(key.slice(6));
   else if (key.startsWith('wood:')) canvas = drawWoodTexture(key.slice(5));
   else if (key.startsWith('paint:')) canvas = drawPaintingTexture(parseInt(key.slice(6), 10));
+  else if (key.startsWith('diploma:')) canvas = drawDiplomaTexture(parseInt(key.slice(8), 10));
+  else if (key === 'clock') canvas = drawClockTexture();
+  else if (key === 'keyboard') canvas = drawKeyboardTexture();
   const t = new THREE.CanvasTexture(canvas);
   t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
   TEX.set(key, t); return t;
@@ -298,6 +332,7 @@ function texFor(key, repeatMeters) {
 function mat(kind, color) {
   const key = kind + '|' + (color || '');
   if (MATS.has(key)) return MATS.get(key);
+  if (kind.endsWith('DS')) { const m2 = mat(kind.slice(0, -2), color).clone(); m2.side = THREE.DoubleSide; MATS.set(key, m2); return m2; }
   let m;
   const C = (c) => new THREE.Color(c);
   switch (kind) {
@@ -325,6 +360,11 @@ function mat(kind, color) {
     case 'line': m = new THREE.MeshBasicMaterial({ color: C(color || '#0E6B70') }); break;
     case 'floor': { const t = texFor('floor:' + color); m = new THREE.MeshStandardMaterial({ map: t, roughness: color === 'parquet' ? .55 : color === 'marmo' ? .2 : .5, metalness: 0 }); break; }
     case 'paint': { const t = texFor('paint:' + color); m = new THREE.MeshStandardMaterial({ map: t, roughness: .8 }); break; }
+    case 'diploma': { const t = texFor('diploma:' + color); m = new THREE.MeshStandardMaterial({ map: t, roughness: .85 }); break; }
+    case 'clock': m = new THREE.MeshStandardMaterial({ map: texFor('clock'), roughness: .5 }); break;
+    case 'keyboard': m = new THREE.MeshStandardMaterial({ map: texFor('keyboard'), roughness: .6 }); break;
+    case 'bottle': m = new THREE.MeshStandardMaterial({ color: C(color || '#7FB4D9'), roughness: .1, metalness: 0, transparent: true, opacity: .55, depthWrite: false }); break;
+    case 'led': m = new THREE.MeshStandardMaterial({ color: C(color || '#2ECC71'), emissive: C(color || '#2ECC71'), emissiveIntensity: 1.4 }); break;
     default: m = new THREE.MeshStandardMaterial({ color: C(color || '#cccccc'), roughness: .6 });
   }
   MATS.set(key, m); return m;
@@ -336,7 +376,8 @@ function finishMat(c, kind = 'lacquer') {
 }
 
 // ===================== catalog: 2D symbols + 3D builders =====================
-const CATS = ['Sala operativa', 'Radiologia', 'Sterilizzazione', 'Sala tecnica', 'Accoglienza e attesa', 'Ufficio e arredo', 'Bagno', 'Impianti', 'Struttura'];
+const CATS = ['Sala operativa', 'Strumenti da banco', 'Radiologia', 'Sterilizzazione', 'Igiene e sicurezza', 'Sala tecnica', 'Informatica', 'Accoglienza e attesa', 'Ufficio e arredo', 'Illuminazione', 'Casa', 'Bagno', 'Impianti', 'Struttura'];
+const DENTAL_CATS = new Set(['Sala operativa', 'Strumenti da banco', 'Radiologia', 'Sterilizzazione', 'Sala tecnica']);
 
 // ---- 2D helpers (local frame in meters, +y = front of the item) ----
 function pRect(g, x, y, w, h) { g.beginPath(); g.rect(x, y, w, h); }
@@ -493,11 +534,11 @@ const CATALOG = [
     },
   },
   {
-    type: 'mobile-operativo', name: 'Mobile operativo a cassetti', cat: 'Sala operativa', w: .9, d: .5, h: .88, colorKind: 'finish', color: '#F1F1EE', snap: true,
+    type: 'mobile-operativo', surface: true, name: 'Mobile operativo a cassetti', cat: 'Sala operativa', w: .9, d: .5, h: .88, colorKind: 'finish', color: '#F1F1EE', snap: true,
     plan: cabinetPlan, build(it, d) { const g = grp(); cabinetBody(g, d.w, d.d, d.h, it.color, { drawers: 4 }); return g; },
   },
   {
-    type: 'mobile-lavello', name: 'Mobile con lavello', cat: 'Sala operativa', w: 1.2, d: .55, h: .9, colorKind: 'finish', color: '#F1F1EE', snap: true,
+    type: 'mobile-lavello', surface: true, name: 'Mobile con lavello', cat: 'Sala operativa', w: 1.2, d: .55, h: .9, colorKind: 'finish', color: '#F1F1EE', snap: true,
     plan(g, it, d, P) { cabinetPlan(g, it, d, P); sinkInTop(g, -d.w / 2 + .3, 0, .4, d.d * .6, P); },
     build(it, d) {
       const g = grp(); cabinetBody(g, d.w, d.d, d.h, it.color, { doors: Math.max(2, Math.round(d.w / .45)) });
@@ -507,7 +548,7 @@ const CATALOG = [
     },
   },
   {
-    type: 'carrello', name: 'Carrello / servomobile', cat: 'Sala operativa', w: .45, d: .45, h: .82, colorKind: 'finish', color: '#F1F1EE', snap: false,
+    type: 'carrello', surface: true, name: 'Carrello / servomobile', cat: 'Sala operativa', w: .45, d: .45, h: .82, colorKind: 'finish', color: '#F1F1EE', snap: false,
     plan(g, it, d, P) { genericPlan(g, it, d, P); pRect(g, -d.w / 2 + .04, -d.d / 2 + .04, d.w - .08, d.d - .08); det(g, P); },
     build(it, d) { const g = grp(); for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) add(g, sp(.025), mat('rubber'), x * (d.w / 2 - .05), .025, z * (d.d / 2 - .05)); add(g, rbx(d.w, d.h - .07, d.d, .03), finishMat(it.color, 'plastic'), 0, .05 + (d.h - .07) / 2, 0); for (let i = 1; i < 4; i++) add(g, bx(d.w - .02, .004, .01), mat('dark'), 0, .05 + (d.h - .07) * i / 4, d.d / 2 + .002); return g; },
   },
@@ -554,7 +595,7 @@ const CATALOG = [
   },
   // ---------------- Sterilizzazione ----------------
   {
-    type: 'mobile-sterilizzazione', name: 'Banco sterilizzazione con lavello', cat: 'Sterilizzazione', w: 2.0, d: .6, h: .9, colorKind: 'finish', color: '#F1F1EE', snap: true,
+    type: 'mobile-sterilizzazione', surface: true, name: 'Banco sterilizzazione con lavello', cat: 'Sterilizzazione', w: 2.0, d: .6, h: .9, colorKind: 'finish', color: '#F1F1EE', snap: true,
     plan(g, it, d, P) { cabinetPlan(g, it, d, P); sinkInTop(g, -d.w / 2 + .3, 0, .42, d.d * .62, P); },
     build(it, d) { const g = grp(); cabinetBody(g, d.w, d.d, d.h, it.color, { doors: Math.max(2, Math.round(d.w / .5)), topMat: mat('steel', '#C9CED1') }); const sx = -d.w / 2 + .3; add(g, bx(.36, .01, d.d * .52), mat('dark', '#5c656b'), sx, d.h + .004, 0); rod(g, [sx, d.h, -d.d / 2 + .06], [sx, d.h + .3, -d.d / 2 + .06], .012, mat('chrome')); rod(g, [sx, d.h + .3, -d.d / 2 + .06], [sx, d.h + .27, -d.d / 2 + .22], .011, mat('chrome')); return g; },
   },
@@ -564,7 +605,7 @@ const CATALOG = [
     build(it, d) { const g = grp(); add(g, rbx(d.w, d.h, d.d, .04), mat('plastic', '#F3F4F2'), 0, d.h / 2, 0); add(g, cy(d.h * .32, d.h * .32, .03, 32), mat('plastic', '#D2D7DA'), -.03, d.h * .52, d.d / 2 + .01, Math.PI / 2); add(g, bx(.08, .05, .005), mat('screen'), d.w / 2 - .07, d.h * .78, d.d / 2 + .003); return g; },
   },
   {
-    type: 'termodisinfettore', name: 'Termodisinfettore (sottopiano)', cat: 'Sterilizzazione', w: .6, d: .6, h: .85, snap: true,
+    type: 'termodisinfettore', surface: true, name: 'Termodisinfettore (sottopiano)', cat: 'Sterilizzazione', w: .6, d: .6, h: .85, snap: true,
     plan(g, it, d, P) { genericPlan(g, it, d, P); pLine(g, -d.w / 2 + .04, d.d / 2 - .06, d.w / 2 - .04, d.d / 2 - .06); },
     build(it, d) { const g = grp(); add(g, rbx(d.w, d.h, d.d, .01), mat('steel', '#D0D5D8'), 0, d.h / 2, 0); add(g, bx(d.w - .04, .1, .006), mat('screen'), 0, d.h - .07, d.d / 2 + .003); add(g, bx(.25, .015, .02), mat('dark'), 0, d.h - .15, d.d / 2 + .01); return g; },
   },
@@ -594,7 +635,7 @@ const CATALOG = [
   },
   // ---------------- Accoglienza e attesa ----------------
   {
-    type: 'reception', name: 'Bancone reception', cat: 'Accoglienza e attesa', w: 1.6, d: .75, h: 1.1, colorKind: 'finish', color: '#F1F1EE', snap: true,
+    type: 'reception', name: 'Bancone reception', surface: true, surfaceH: .78, cat: 'Accoglienza e attesa', w: 1.6, d: .75, h: 1.1, colorKind: 'finish', color: '#F1F1EE', snap: true,
     plan(g, it, d, P) { genericPlan(g, it, d, P); pRect(g, -d.w / 2, d.d / 2 - .22, d.w, .22); det(g, P); },
     build(it, d) { const g = grp(); const F = finishMat(it.color); add(g, bx(d.w, .75, d.d - .25), F, 0, .375, -.12); add(g, bx(d.w, .03, d.d - .2), mat('plastic', '#E9EAE8'), 0, .76, -.1); add(g, bx(d.w, d.h, .04), F, 0, d.h / 2, d.d / 2 - .02); add(g, bx(d.w, .03, .3), mat('wood', 'oak'), 0, d.h + .015, d.d / 2 - .1); return g; },
   },
@@ -616,7 +657,7 @@ const CATALOG = [
     plan: sofaPlan, build: sofaBuild,
   },
   {
-    type: 'tavolino', name: 'Tavolino', cat: 'Accoglienza e attesa', w: .6, d: .6, h: .45, colorKind: 'finish', color: 'wood:oak', snap: false,
+    type: 'tavolino', surface: true, name: 'Tavolino', cat: 'Accoglienza e attesa', w: .6, d: .6, h: .45, colorKind: 'finish', color: 'wood:oak', snap: false,
     plan(g, it, d, P) { pEll(g, 0, 0, d.w / 2, d.d / 2); fs(g, P); },
     build(it, d) { const g = grp(); add(g, cy(1, 1, .03, 36), finishMat(it.color), 0, d.h - .015, 0).scale.set(d.w / 2, 1, d.d / 2); add(g, cy(.03, .03, d.h - .03, 12), mat('metal'), 0, (d.h - .03) / 2, 0); add(g, cy(.2, .2, .015, 24), mat('metal'), 0, .008, 0); return g; },
   },
@@ -641,7 +682,7 @@ const CATALOG = [
   },
   // ---------------- Ufficio e arredo ----------------
   {
-    type: 'scrivania', name: 'Scrivania', cat: 'Ufficio e arredo', w: 1.4, d: .7, h: .75, colorKind: 'finish', color: 'wood:oak', snap: true,
+    type: 'scrivania', surface: true, name: 'Scrivania', cat: 'Ufficio e arredo', w: 1.4, d: .7, h: .75, colorKind: 'finish', color: 'wood:oak', snap: true,
     plan(g, it, d, P) { genericPlan(g, it, d, P); },
     build(it, d) { const g = grp(); add(g, bx(d.w, .03, d.d), finishMat(it.color), 0, d.h - .015, 0); const M = mat('metal'); for (const s of [-1, 1]) { add(g, bx(.04, d.h - .03, d.d - .1), M, s * (d.w / 2 - .06), (d.h - .03) / 2, 0); } add(g, bx(d.w - .16, .2, .015), finishMat(it.color), 0, d.h - .14, -d.d / 2 + .08); return g; },
   },
@@ -660,11 +701,11 @@ const CATALOG = [
     build(it, d) { const g = grp(); const F = finishMat(it.color); add(g, bx(.02, d.h, d.d), F, -d.w / 2 + .01, d.h / 2, 0); add(g, bx(.02, d.h, d.d), F, d.w / 2 - .01, d.h / 2, 0); add(g, bx(d.w, d.h, .01), F, 0, d.h / 2, -d.d / 2 + .005); const n = 5; const r = rng(hashStr(it.id || 'l')); for (let i = 0; i <= n; i++) { const y = .02 + i * (d.h - .04) / n; add(g, bx(d.w - .04, .02, d.d - .01), F, 0, y, .005); if (i < n) { let x = -d.w / 2 + .04; while (x < d.w / 2 - .08) { const bw = .025 + r() * .03, bh = .2 + r() * .1; add(g, bx(bw, bh, d.d * .7), mat('matte', ['#7A2E3A', '#2C3958', '#C79A3A', '#4E6E58', '#E5DDCB', '#45494D'][Math.floor(r() * 6)]), x + bw / 2, y + .01 + bh / 2, .02); x += bw + .004; if (r() < .12) x += .08; } } } return g; },
   },
   {
-    type: 'mobile-basso', name: 'Mobile basso', cat: 'Ufficio e arredo', w: 1.2, d: .45, h: .8, colorKind: 'finish', color: '#C3C7C8', snap: true,
+    type: 'mobile-basso', surface: true, name: 'Mobile basso', cat: 'Ufficio e arredo', w: 1.2, d: .45, h: .8, colorKind: 'finish', color: '#C3C7C8', snap: true,
     plan: cabinetPlan, build(it, d) { const g = grp(); cabinetBody(g, d.w, d.d, d.h, it.color, { doors: Math.max(2, Math.round(d.w / .5)), topMat: finishMat(it.color) }); return g; },
   },
   {
-    type: 'tavolo', name: 'Tavolo riunioni', cat: 'Ufficio e arredo', w: 1.6, d: .9, h: .75, colorKind: 'finish', color: 'wood:oak', snap: false,
+    type: 'tavolo', surface: true, name: 'Tavolo riunioni', cat: 'Ufficio e arredo', w: 1.6, d: .9, h: .75, colorKind: 'finish', color: 'wood:oak', snap: false,
     plan: genericPlan, build(it, d) { const g = grp(); add(g, bx(d.w, .03, d.d), finishMat(it.color), 0, d.h - .015, 0); for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) add(g, bx(.05, d.h - .03, .05), mat('metal'), x * (d.w / 2 - .08), (d.h - .03) / 2, z * (d.d / 2 - .08)); return g; },
   },
   {
@@ -698,7 +739,7 @@ const CATALOG = [
     build(it, d) { const g = grp(); add(g, rbx(d.w, .14, d.d, .06), mat('ceramic'), 0, d.h - .07, 0); add(g, cy(.2, .2, .01, 28), mat('ceramic', '#E9ECEC'), 0, d.h + .002, 0); rod(g, [0, d.h, -d.d / 2 + .06], [0, d.h + .14, -d.d / 2 + .06], .013, mat('chrome')); rod(g, [0, d.h + .14, -d.d / 2 + .06], [0, d.h + .12, -d.d / 2 + .18], .011, mat('chrome')); return g; },
   },
   {
-    type: 'lavandino', name: 'Lavandino con mobile', cat: 'Bagno', w: .8, d: .5, h: .88, colorKind: 'finish', color: '#F1F1EE', snap: true,
+    type: 'lavandino', surface: true, name: 'Lavandino con mobile', cat: 'Bagno', w: .8, d: .5, h: .88, colorKind: 'finish', color: '#F1F1EE', snap: true,
     plan(g, it, d, P) { cabinetPlan(g, it, d, P); sinkInTop(g, 0, 0, d.w * .55, d.d * .6, P); },
     build(it, d) { const g = grp(); cabinetBody(g, d.w, d.d, d.h, it.color, { doors: 2 }); add(g, bx(d.w * .55, .01, d.d * .55), mat('dark', '#5c656b'), 0, d.h + .004, 0); rod(g, [0, d.h, -d.d / 2 + .06], [0, d.h + .26, -d.d / 2 + .06], .012, mat('chrome')); rod(g, [0, d.h + .26, -d.d / 2 + .06], [0, d.h + .24, -d.d / 2 + .2], .011, mat('chrome')); return g; },
   },
@@ -767,12 +808,358 @@ function sofaBuild(it, d) {
   for (const s of [-1, 1]) add(g, rbx(arm, d.h * .78, d.d, .04), F, s * (d.w / 2 - arm / 2), d.h * .39, 0);
   return g;
 }
-const CAT_BY_TYPE = Object.fromEntries(CATALOG.map((c) => [c.type, c]));
+const CAT_BY_TYPE = {}; // filled after every catalog file has been loaded (see 19-catalog-index.js)
 function catOf(it) { return CAT_BY_TYPE[it.type] || CATALOG[0]; }
 function dimsOf(it) { const c = catOf(it); const d = it.dims || {}; return { w: d.w ?? c.w, d: d.d ?? c.d, h: d.h ?? c.h }; }
-function elevOf(it) { const c = catOf(it); return it.elev ?? c.elev ?? 0; }
+function elevOf(it) {
+  const c = catOf(it); if (it.elev != null) return it.elev;
+  if (c.mount === 'ceiling') return Math.max(0, (S.project?.settings?.wallH || 2.7) - dimsOf(it).h);
+  return c.elev ?? 0;
+}
+const shortName = (c) => c.short || c.name.replace(/\s*\(.*\)\s*$/, '');
 function colorOf(it) { const c = catOf(it); return it.color ?? c.color; }
 function paletteFor(kind) { return kind === 'uph' ? UPHOLSTERY : kind === 'finish' ? FINISHES : kind === 'fabric' ? FABRICS : kind === 'metal' ? METALS : null; }
+
+// ===================== catalog: extra equipment, IT, hygiene, lighting, home =====================
+function pText(g, txt, x, y, size, P) { g.save(); g.fillStyle = P.detail; g.font = `600 ${size}px "Barlow Semi Condensed", system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(txt, x, y); g.restore(); }
+function cylPlan(g, it, d, P) { pEll(g, 0, 0, d.w / 2, d.d / 2); fs(g, P); }
+function counterDevicePlan(g, it, d, P) { pRRect(g, -d.w / 2, -d.d / 2, d.w, d.d, Math.min(d.w, d.d) * .15); fs(g, P); }
+function wallBoxPlan(g, it, d, P) { pRect(g, -d.w / 2, -d.d / 2, d.w, d.d); fs(g, P); }
+// a small LED or display dot on a device front
+function frontPanel(g, w, h, y, z, m) { return add(g, bx(w, h, .004), m || mat('screen'), 0, y, z); }
+
+CATALOG.push(
+  // ---------------- Sala operativa ----------------
+  {
+    type: 'scanner-muro', name: 'Scanner intraorale a muro (USB-C)', short: 'Scanner IO', cat: 'Sala operativa', w: .14, d: .12, h: .32, elev: 1.15, mount: 'wall', snap: true, cable: true,
+    note: 'Supporto a parete con scanner collegato al computer via USB-C. Dalle proprietà puoi collegarlo al PC e verificare se il cavo basta.',
+    plan(g, it, d, P) { hungPlan(g, it, d, P); pCirc(g, 0, .01, Math.min(d.w, d.d) * .25); det(g, P); },
+    build(it, d) {
+      const g = grp(); const W = mat('plastic', '#F4F5F3');
+      add(g, rbx(d.w, d.h, .03, .012), W, 0, d.h / 2, -d.d / 2 + .015);
+      add(g, rbx(d.w * .7, .05, d.d * .7, .015), mat('plastic', '#D8DCDE'), 0, d.h * .62, -d.d / 2 + d.d * .38);
+      const wand = add(g, rbx(.045, .26, .05, .02), mat('plastic', '#FAFAF8'), 0, d.h * .62 + .1, -d.d / 2 + .065, -.12); wand.castShadow = true;
+      add(g, cy(.006, .006, .3, 8), mat('dark'), .03, d.h * .3, -d.d / 2 + .05);
+      return g;
+    },
+  },
+  {
+    type: 'frigo-farmaci', name: 'Frigorifero farmaci', short: 'Frigo farmaci', cat: 'Sala operativa', w: .5, d: .55, h: .85, snap: true, surface: true,
+    plan(g, it, d, P) { genericPlan(g, it, d, P); pText(g, 'F', 0, 0, Math.min(d.w, d.d) * .4, P); },
+    build(it, d) { const g = grp(); add(g, rbx(d.w, d.h, d.d, .02), mat('plastic', '#F2F3F1'), 0, d.h / 2, 0); add(g, bx(d.w - .04, d.h - .1, .01), mat('glass', '#CFE3EA'), 0, d.h / 2, d.d / 2 + .002); add(g, bx(.02, d.h * .5, .02), mat('steel'), d.w / 2 - .05, d.h / 2, d.d / 2 + .02); frontPanel(g, .08, .03, d.h - .05, d.d / 2 + .006); return g; },
+  },
+  // ---------------- Strumenti da banco ----------------
+  {
+    type: 'x-smart-pro', name: 'X-Smart Pro (Dentsply Sirona)', short: 'X-Smart Pro', cat: 'Strumenti da banco', w: .12, d: .155, h: .185, elev: .9, mount: 'counter', snap: true,
+    note: 'Motore endodontico con localizzatore apicale. Ingombro dell\'unità: 120 × 155 × 185 mm (scheda X-Smart Pro+). Si appoggia da solo sul mobile sotto.',
+    plan(g, it, d, P) { counterDevicePlan(g, it, d, P); pRect(g, -d.w * .3, d.d * .15, d.w * .6, d.d * .25); det(g, P); },
+    build(it, d) {
+      const g = grp(); const sx = d.w / .12, sz = d.d / .155, sy = d.h / .185;
+      add(g, rbx(.12, .12, .155, .025), mat('plastic', '#F4F5F3'), 0, .06, 0);
+      add(g, rbx(.1, .065, .02, .01), mat('screen'), 0, .1, .07, -.5);
+      const hp = grp(); add(hp, cy(.011, .009, .17, 14), mat('plastic', '#E9ECEC')); add(hp, cy(.007, .007, .03, 10), mat('steel'), 0, .1, 0);
+      hp.position.set(.045, .15, -.03); hp.rotation.set(.25, 0, .15); g.add(hp);
+      add(g, cy(.02, .02, .015, 18), mat('dark', '#3B4248'), .045, .125, -.03);
+      g.scale.set(sx, sy, sz); return g;
+    },
+  },
+  {
+    type: 'easyshade', name: 'VITA Easyshade V', short: 'Easyshade', cat: 'Strumenti da banco', w: .12, d: .18, h: .12, elev: .9, mount: 'counter', snap: true,
+    note: 'Spettrofotometro per la presa del colore con base di ricarica. Ingombro indicativo, da verificare sulla scheda VITA.',
+    plan(g, it, d, P) { counterDevicePlan(g, it, d, P); pEll(g, 0, -d.d * .05, d.w * .22, d.d * .38); det(g, P); },
+    build(it, d) {
+      const g = grp(); const s = Math.min(d.w / .12, d.d / .18);
+      add(g, rbx(.12, .035, .18, .02), mat('plastic', '#EDEFEF'), 0, .0175, 0);
+      const hp = add(g, rbx(.05, .045, .17, .022), mat('plastic', '#FAFAF8'), 0, .065, -.005, -.15); hp.castShadow = true;
+      add(g, rbx(.032, .006, .05, .004), mat('screen'), 0, .09, -.04, -.15);
+      add(g, cy(.006, .004, .06, 10), mat('dark'), 0, .085, .095, Math.PI / 2 - .2);
+      g.scale.set(s, d.h / .12, s); return g;
+    },
+  },
+  {
+    type: 'motore-chirurgico', name: 'Motore chirurgico (implantologia)', short: 'Motore chirurgico', cat: 'Strumenti da banco', w: .27, d: .25, h: .55, elev: .9, mount: 'counter', snap: true,
+    note: 'Unità con asta per la soluzione fisiologica e pompa peristaltica. Il pedale si aggiunge a parte.',
+    plan(g, it, d, P) { counterDevicePlan(g, it, d, P); pCirc(g, -d.w * .3, -d.d * .25, .02); det(g, P); pRect(g, -d.w * .25, d.d * .05, d.w * .5, d.d * .25); det(g, P); },
+    build(it, d) {
+      const g = grp(); const sx = d.w / .27, sz = d.d / .25;
+      add(g, rbx(.27, .1, .25, .025), mat('plastic', '#F3F4F2'), 0, .05, 0);
+      add(g, rbx(.16, .07, .02, .01), mat('screen'), 0, .075, .12, -.55);
+      add(g, cy(.03, .03, .03, 20), mat('dark', '#3B4248'), .08, .1, .02);
+      rod(g, [-.09, .1, -.08], [-.09, d.h, -.08], .006, mat('chrome'));
+      rod(g, [-.12, d.h - .02, -.08], [-.06, d.h - .02, -.08], .004, mat('chrome'));
+      add(g, rbx(.06, .1, .025, .012), mat('bottle', '#E8F1F5'), -.09, d.h - .09, -.08);
+      add(g, cy(.002, .002, d.h - .2, 6), mat('plastic', '#DDE6EA'), -.04, (d.h + .1) / 2, -.06);
+      g.scale.set(sx, 1, sz); return g;
+    },
+  },
+  {
+    type: 'pedale', name: 'Pedale comando motore', short: 'Pedale', cat: 'Strumenti da banco', w: .22, d: .24, h: .07, snap: false, obstacle: false,
+    plan(g, it, d, P) { pRRect(g, -d.w / 2, -d.d / 2, d.w, d.d, .04); fs(g, P); pRRect(g, -d.w * .35, -d.d * .2, d.w * .7, d.d * .55, .03); det(g, P); },
+    build(it, d) { const g = grp(); add(g, rbx(d.w, d.h * .6, d.d, .02), mat('plastic', '#3B4248'), 0, d.h * .3, 0); add(g, rbx(d.w * .7, .015, d.d * .6, .006), mat('plastic', '#5A6268'), 0, d.h * .7, .01, -.12); return g; },
+  },
+  {
+    type: 'lampada-polimerizzatrice', name: 'Lampada fotopolimerizzatrice', short: 'Lampada polim.', cat: 'Strumenti da banco', w: .1, d: .14, h: .24, elev: .9, mount: 'counter', snap: true,
+    plan(g, it, d, P) { counterDevicePlan(g, it, d, P); pCirc(g, 0, 0, Math.min(d.w, d.d) * .25); det(g, P); },
+    build(it, d) { const g = grp(); add(g, rbx(d.w, .04, d.d, .015), mat('plastic', '#EDEFEF'), 0, .02, 0); const pen = grp(); add(pen, cy(.014, .012, .2, 14), mat('plastic', '#FAFAF8')); add(pen, cy(.005, .005, .06, 10), mat('glass', '#F2A93B'), 0, .12, .025, .9); pen.position.set(0, .14, 0); pen.rotation.x = -.15; g.add(pen); return g; },
+  },
+  // ---------------- Radiologia ----------------
+  {
+    type: 'cbct', name: 'CBCT (cone beam)', short: 'CBCT', cat: 'Radiologia', w: 1.3, d: 1.45, h: 2.35, snap: false,
+    note: 'Ingombro indicativo: verifica dimensioni, spazio di rotazione e radioprotezione sulla scheda del produttore.',
+    plan(g, it, d, P) { CAT_BY_TYPE.opt ? CAT_BY_TYPE.opt.plan(g, it, d, P) : genericPlan(g, it, d, P); },
+    build(it, d) { return CAT_BY_TYPE.opt.build(it, d); },
+  },
+  // ---------------- Sterilizzazione ----------------
+  {
+    type: 'distillatore', name: 'Distillatore / demineralizzatore', short: 'Distillatore', cat: 'Sterilizzazione', w: .26, d: .3, h: .4, elev: .9, mount: 'counter', snap: true,
+    plan: counterDevicePlan,
+    build(it, d) { const g = grp(); add(g, rbx(d.w, d.h * .7, d.d, .03), mat('plastic', '#F2F3F1'), 0, d.h * .35, 0); add(g, cy(d.w * .32, d.w * .32, d.h * .3, 24), mat('bottle', '#CFE6F2'), 0, d.h * .85, -.02); frontPanel(g, d.w * .5, .04, d.h * .55, d.d / 2 + .002); return g; },
+  },
+  // ---------------- Igiene e sicurezza ----------------
+  {
+    type: 'dispenser-sapone', name: 'Dispenser sapone automatico a muro', short: 'Dispenser sapone', cat: 'Igiene e sicurezza', w: .12, d: .11, h: .2, elev: 1.1, mount: 'wall', snap: true, obstacle: false,
+    plan: wallBoxPlan,
+    build(it, d) { const g = grp(); add(g, rbx(d.w, d.h, d.d, .02), mat('plastic', '#F6F6F4'), 0, d.h / 2, 0); add(g, rbx(d.w * .7, d.h * .35, .005, .004), mat('bottle', '#9FC8DA'), 0, d.h * .62, d.d / 2); add(g, cy(.008, .008, .02, 10), mat('dark'), 0, .005, d.d * .2); add(g, sp(.006), mat('led', '#3BA3D0'), 0, d.h * .2, d.d / 2 + .002); return g; },
+  },
+  {
+    type: 'dispenser-carta', name: 'Dispenser carta asciugamani a muro', short: 'Dispenser carta', cat: 'Igiene e sicurezza', w: .3, d: .13, h: .38, elev: 1.2, mount: 'wall', snap: true, obstacle: false,
+    plan: wallBoxPlan,
+    build(it, d) { const g = grp(); add(g, rbx(d.w, d.h, d.d, .025), mat('plastic', '#F6F6F4'), 0, d.h / 2, 0); add(g, rbx(d.w * .6, d.h * .3, .005, .004), mat('plastic', '#C9D2D6'), 0, d.h * .6, d.d / 2); add(g, bx(d.w * .55, .03, .006), mat('matte', '#FFFFFF'), 0, -.01, d.d * .25); return g; },
+  },
+  {
+    type: 'dispenser-gel', name: 'Colonnina gel igienizzante', short: 'Gel mani', cat: 'Igiene e sicurezza', w: .3, d: .3, h: 1.25, snap: false,
+    plan(g, it, d, P) { pCirc(g, 0, 0, d.w / 2); g.fillStyle = P.fillSoft; g.fill(); det(g, P, true); pRect(g, -.06, -.05, .12, .1); fs(g, P); },
+    build(it, d) { const g = grp(); add(g, cy(d.w / 2, d.w / 2, .02, 28), mat('metal', '#3A3F44'), 0, .01, 0); add(g, cy(.02, .02, d.h - .25, 12), mat('metal', '#3A3F44'), 0, (d.h - .25) / 2, 0); add(g, rbx(.12, .22, .1, .02), mat('plastic', '#F6F6F4'), 0, d.h - .12, .03); add(g, rbx(.08, .08, .005, .004), mat('bottle', '#B9D8E4'), 0, d.h - .1, .081); return g; },
+  },
+  {
+    type: 'cestino-pedale', name: 'Cestino a pedale', short: 'Cestino', cat: 'Igiene e sicurezza', w: .3, d: .3, h: .45, snap: false, colorKind: 'metal', color: '#D7DCDF',
+    plan(g, it, d, P) { cylPlan(g, it, d, P); pRect(g, -.05, d.d / 2 - .02, .1, .05); fs(g, P); },
+    build(it, d) { const g = grp(); const m = mat('chrome', colorOf(it)); add(g, cy(d.w / 2, d.w / 2 * .92, d.h - .02, 28), m, 0, (d.h - .02) / 2, 0); add(g, cy(d.w / 2 + .005, d.w / 2 + .005, .025, 28), mat('metal', '#2B2E31'), 0, d.h - .01, 0); add(g, bx(.1, .015, .06), mat('metal', '#2B2E31'), 0, .02, d.d / 2 + .01); return g; },
+  },
+  {
+    type: 'cestino', name: 'Cestino carta (aperto)', short: 'Cestino', cat: 'Igiene e sicurezza', w: .28, d: .28, h: .32, snap: false, colorKind: 'fabric', color: '#8E9599',
+    plan(g, it, d, P) { cylPlan(g, it, d, P); pEll(g, 0, 0, d.w * .4, d.d * .4); det(g, P); },
+    build(it, d) { const g = grp(); add(g, new THREE.CylinderGeometry(d.w / 2, d.w / 2 * .82, d.h, 28, 1, true), mat('matteDS', colorOf(it)), 0, d.h / 2, 0); add(g, cy(d.w / 2 * .82, d.w / 2 * .82, .01, 28), mat('matte', colorOf(it)), 0, .005, 0); return g; },
+  },
+  {
+    type: 'rifiuti-sanitari', name: 'Contenitore rifiuti sanitari', short: 'Rifiuti sanitari', cat: 'Igiene e sicurezza', w: .3, d: .3, h: .45, snap: true,
+    note: 'Contenitore per rifiuti sanitari a rischio infettivo, da tenere vicino alla zona operativa.',
+    plan(g, it, d, P) { genericPlan(g, it, d, P); pText(g, 'R', 0, 0, Math.min(d.w, d.d) * .45, P); },
+    build(it, d) { const g = grp(); add(g, rbx(d.w, d.h, d.d, .01), mat('matte', '#E9C43A'), 0, d.h / 2, 0); add(g, bx(d.w * .8, d.h * .3, .004), mat('matte', '#C0392B'), 0, d.h * .55, d.d / 2 + .001); add(g, rbx(d.w + .01, .04, d.d + .01, .008), mat('plastic', '#D9B12E'), 0, d.h - .02, 0); return g; },
+  },
+  {
+    type: 'contenitore-taglienti', name: 'Contenitore taglienti', short: 'Taglienti', cat: 'Igiene e sicurezza', w: .14, d: .14, h: .2, elev: .9, mount: 'counter', snap: true,
+    plan(g, it, d, P) { counterDevicePlan(g, it, d, P); },
+    build(it, d) { const g = grp(); add(g, cy(d.w / 2, d.w / 2 * .9, d.h * .85, 20), mat('plastic', '#E9C43A'), 0, d.h * .425, 0); add(g, cy(d.w / 2 + .004, d.w / 2 + .004, d.h * .15, 20), mat('plastic', '#C0392B'), 0, d.h * .925, 0); return g; },
+  },
+  {
+    type: 'dae', name: 'Defibrillatore DAE a muro', short: 'DAE', cat: 'Igiene e sicurezza', w: .42, d: .2, h: .45, elev: 1.2, mount: 'wall', snap: true, obstacle: false,
+    plan(g, it, d, P) { wallBoxPlan(g, it, d, P); pText(g, '+', 0, 0, d.d * .8, P); },
+    build(it, d) { const g = grp(); add(g, rbx(d.w, d.h, d.d, .02), mat('plastic', '#2E9E5B'), 0, d.h / 2, 0); add(g, bx(d.w * .8, d.h * .7, .005), mat('glass', '#E8F4EC'), 0, d.h / 2, d.d / 2); add(g, rbx(d.w * .5, d.h * .45, d.d * .5, .02), mat('plastic', '#F4C21B'), 0, d.h / 2, .0); return g; },
+  },
+  {
+    type: 'estintore', name: 'Estintore', short: 'Estintore', cat: 'Igiene e sicurezza', w: .2, d: .18, h: .6, elev: .1, mount: 'wall', snap: true, obstacle: false,
+    plan(g, it, d, P) { pCirc(g, 0, 0, Math.min(d.w, d.d) / 2); fs(g, P); },
+    build(it, d) { const g = grp(); add(g, cy(.08, .08, d.h - .12, 20), mat('plastic', '#C0392B'), 0, (d.h - .12) / 2, .01); add(g, sp(.08, 20, 10), mat('plastic', '#C0392B'), 0, d.h - .12, .01).scale.set(1, .5, 1); add(g, cy(.02, .02, .08, 10), mat('dark'), 0, d.h - .05, .01); add(g, bx(.06, .02, .02), mat('dark'), .02, d.h - .03, .02); return g; },
+  },
+  // ---------------- Informatica ----------------
+  {
+    type: 'pc-tower', name: 'Computer (case a terra)', short: 'PC', cat: 'Informatica', w: .2, d: .45, h: .45, snap: true, pcPort: .35,
+    plan(g, it, d, P) { genericPlan(g, it, d, P); pLine(g, -d.w / 2 + .02, d.d / 2 - .04, d.w / 2 - .02, d.d / 2 - .04); pText(g, 'PC', 0, 0, Math.min(d.w, d.d) * .35, P); },
+    build(it, d) { const g = grp(); add(g, rbx(d.w, d.h, d.d, .012), mat('dark', '#24282B'), 0, d.h / 2 + .01, 0); add(g, bx(d.w - .03, d.h - .05, .004), mat('metal', '#33393D'), 0, d.h / 2 + .01, d.d / 2 + .002); add(g, sp(.006), mat('led', '#3BA3D0'), 0, d.h - .05, d.d / 2 + .006); for (let i = 0; i < 4; i++) add(g, bx(.03, .01, .03), mat('rubber'), (i % 2 ? 1 : -1) * (d.w / 2 - .03), .005, (i < 2 ? 1 : -1) * (d.d / 2 - .04)); return g; },
+  },
+  {
+    type: 'monitor-scrivania', name: 'Monitor da scrivania', short: 'Monitor', cat: 'Informatica', w: .55, d: .2, h: .45, elev: .75, mount: 'counter', snap: true,
+    plan(g, it, d, P) { pRect(g, -d.w / 2, -.02, d.w, .03); fs(g, P); pRRect(g, -.1, -d.d / 2, .2, d.d * .6, .02); det(g, P); },
+    build(it, d) { const g = grp(); add(g, rbx(.2, .015, .16, .006), mat('metal', '#2B2E31'), 0, .0075, -.02); add(g, bx(.03, d.h * .45, .02), mat('metal', '#2B2E31'), 0, d.h * .25, -.04); add(g, rbx(d.w, d.h * .62, .025, .006), mat('dark', '#16191B'), 0, d.h * .62, 0); add(g, bx(d.w - .02, d.h * .62 - .02, .002), mat('screen'), 0, d.h * .62, .013); return g; },
+  },
+  {
+    type: 'tastiera', name: 'Tastiera e mouse', short: 'Tastiera', cat: 'Informatica', w: .55, d: .16, h: .03, elev: .75, mount: 'counter', snap: false, obstacle: false,
+    plan(g, it, d, P) { pRRect(g, -d.w / 2, -d.d / 2, d.w * .78, d.d, .01); fs(g, P); pEll(g, d.w / 2 - .04, 0, .03, .05); fs(g, P); },
+    build(it, d) { const g = grp(); const kw = d.w * .78; add(g, rbx(kw, .02, d.d, .006), mat('dark', '#2F3336'), -d.w / 2 + kw / 2, .01, 0); add(g, bx(kw - .01, .001, d.d - .01), mat('keyboard'), -d.w / 2 + kw / 2, .0205, 0); add(g, sp(1, 16, 10), mat('dark', '#2F3336'), d.w / 2 - .04, .012, 0).scale.set(.03, .015, .05); return g; },
+  },
+  {
+    type: 'stampante', name: 'Stampante multifunzione', short: 'Stampante', cat: 'Informatica', w: .42, d: .38, h: .3, elev: .75, mount: 'counter', snap: true,
+    plan(g, it, d, P) { genericPlan(g, it, d, P); pRect(g, -d.w * .35, d.d / 2 - .08, d.w * .7, .06); det(g, P); },
+    build(it, d) { const g = grp(); add(g, rbx(d.w, d.h * .8, d.d, .015), mat('plastic', '#E9EBEA'), 0, d.h * .4, 0); add(g, rbx(d.w, d.h * .2, d.d * .8, .01), mat('plastic', '#D3D7D8'), 0, d.h * .9, -d.d * .1); add(g, bx(d.w * .7, .01, .12), mat('matte', '#FFFFFF'), 0, d.h * .45, d.d / 2); frontPanel(g, .08, .04, d.h * .7, d.d / 2 + .002); return g; },
+  },
+  {
+    type: 'router', name: 'Router / switch di rete', short: 'Router', cat: 'Informatica', w: .25, d: .16, h: .05, elev: .75, mount: 'counter', snap: true, obstacle: false,
+    plan: counterDevicePlan,
+    build(it, d) { const g = grp(); add(g, rbx(d.w, d.h, d.d, .01), mat('plastic', '#F2F3F1'), 0, d.h / 2, 0); for (let i = 0; i < 5; i++) add(g, sp(.004), mat('led', '#2ECC71'), -d.w * .3 + i * .03, d.h * .6, d.d / 2 + .001); return g; },
+  },
+  // ---------------- Accoglienza e attesa ----------------
+  {
+    type: 'erogatore-acqua', name: 'Distributore acqua (boccione)', short: 'Acqua', cat: 'Accoglienza e attesa', w: .32, d: .35, h: 1.4, snap: true,
+    plan(g, it, d, P) { genericPlan(g, it, d, P); pCirc(g, 0, -.02, Math.min(d.w, d.d) * .38); det(g, P); },
+    build(it, d) {
+      const g = grp(); const bodyH = d.h - .45;
+      add(g, rbx(d.w, bodyH, d.d, .02), mat('plastic', '#F4F5F3'), 0, bodyH / 2, 0);
+      add(g, bx(d.w * .6, .2, .03), mat('dark', '#3B4248'), 0, bodyH - .2, d.d / 2 - .01);
+      add(g, cy(.008, .008, .04, 8), mat('plastic', '#2F7FD0'), -.05, bodyH - .13, d.d / 2 + .01, Math.PI / 2); add(g, cy(.008, .008, .04, 8), mat('plastic', '#C0392B'), .05, bodyH - .13, d.d / 2 + .01, Math.PI / 2);
+      add(g, cy(.135, .135, .38, 28), mat('bottle', '#7FB4D9'), 0, bodyH + .21, 0); add(g, cy(.05, .135, .05, 28), mat('bottle', '#7FB4D9'), 0, bodyH + .02, 0);
+      add(g, cy(.035, .035, .25, 14), mat('plastic', '#FFFFFF'), d.w / 2 + .03, bodyH - .25, .02);
+      return g;
+    },
+  },
+  {
+    type: 'quadro-laurea', name: 'Quadro laurea / certificato', short: 'Attestato', cat: 'Accoglienza e attesa', w: .45, d: .03, h: .35, elev: 1.45, mount: 'wall', snap: true, obstacle: false, colorKind: 'metal', color: '#2B2E31',
+    note: 'Cornice con attestato generico: imposta larghezza e altezza della tua cornice (es. 50 × 40 cm o A4 in verticale).',
+    plan(g, it, d, P) { pRect(g, -d.w / 2, -d.d / 2, d.w, Math.max(d.d, .03)); fs(g, P); },
+    build(it, d) { const g = grp(); add(g, bx(d.w, d.h, .025), mat('metal', colorOf(it)), 0, d.h / 2, -d.d / 2 + .0125); add(g, bx(d.w - .05, d.h - .05, .003), mat('diploma', String(hashStr(it.id || 'd') % 997)), 0, d.h / 2, -d.d / 2 + .027); add(g, bx(d.w - .04, d.h - .04, .002), mat('glass', '#EEF6F8'), 0, d.h / 2, -d.d / 2 + .03); return g; },
+  },
+  {
+    type: 'orologio', name: 'Orologio a parete', short: 'Orologio', cat: 'Accoglienza e attesa', w: .32, d: .05, h: .32, elev: 2.0, mount: 'wall', snap: true, obstacle: false,
+    plan(g, it, d, P) { pRect(g, -d.w / 2, -d.d / 2, d.w, d.d); fs(g, P); },
+    build(it, d) { const g = grp(); add(g, cy(d.w / 2, d.w / 2, .04, 40), mat('metal', '#2B2E31'), 0, d.h / 2, -d.d / 2 + .02, Math.PI / 2); add(g, new THREE.CircleGeometry(d.w / 2 - .012, 40), mat('clock'), 0, d.h / 2, -d.d / 2 + .041); return g; },
+  },
+  {
+    type: 'portariviste', name: 'Portariviste', short: 'Riviste', cat: 'Accoglienza e attesa', w: .36, d: .3, h: .65, snap: true, colorKind: 'finish', color: 'wood:oak',
+    plan(g, it, d, P) { genericPlan(g, it, d, P); pLine(g, -d.w / 2, 0, d.w / 2, 0); },
+    build(it, d) { const g = grp(); const F = finishMat(colorOf(it)); add(g, bx(d.w, .02, d.d), F, 0, .01, 0); for (const s of [-1, 1]) add(g, bx(.015, d.h, d.d), F, s * (d.w / 2 - .0075), d.h / 2, 0); for (let i = 0; i < 3; i++) { add(g, bx(d.w - .03, .015, d.d * .9), F, 0, .15 + i * .2, 0, -.15); add(g, bx(d.w * .7, .008, d.d * .6), mat('matte', ['#C79A3A', '#3D5A80', '#B5644A'][i]), 0, .17 + i * .2, .01, -.15); } return g; },
+  },
+  // ---------------- Ufficio e arredo ----------------
+  {
+    type: 'armadietto-spogliatoio', name: 'Armadietto spogliatoio (2 posti)', short: 'Armadietto', cat: 'Ufficio e arredo', w: .6, d: .5, h: 1.8, snap: true, colorKind: 'finish', color: '#C3C7C8',
+    plan: tallPlan,
+    build(it, d) { const g = grp(); const F = finishMat(colorOf(it), 'metal'); add(g, bx(d.w, d.h - .1, d.d), F, 0, (d.h - .1) / 2 + .1, 0); add(g, bx(d.w - .04, .1, d.d - .04), mat('dark'), 0, .05, 0); for (const s of [-1, 1]) { add(g, bx(d.w / 2 - .01, d.h - .12, .01), F, s * d.w / 4, (d.h - .1) / 2 + .1, d.d / 2 + .004); for (let k = 0; k < 4; k++) add(g, bx(d.w / 2 - .1, .006, .004), mat('dark'), s * d.w / 4, d.h - .2 - k * .03, d.d / 2 + .01); add(g, cy(.01, .01, .02, 10), mat('steel'), s * (d.w / 4 - .08) * -1 + s * 0, d.h * .55, d.d / 2 + .015, Math.PI / 2); } return g; },
+  },
+  // ---------------- Illuminazione ----------------
+  {
+    type: 'piantana', name: 'Piantana (lampada da terra)', short: 'Piantana', cat: 'Illuminazione', w: .4, d: .4, h: 1.75, snap: false, colorKind: 'metal', color: '#2B2E31',
+    plan(g, it, d, P) { pCirc(g, 0, 0, d.w / 2); g.fillStyle = P.fillSoft; g.fill(); det(g, P, true); pCirc(g, 0, 0, .12); fs(g, P); },
+    build(it, d) { const g = grp(); const M = mat('metal', colorOf(it)); add(g, cy(.14, .15, .025, 28), M, 0, .0125, 0); add(g, cy(.011, .011, d.h - .3, 10), M, 0, (d.h - .3) / 2, 0); add(g, new THREE.CylinderGeometry(d.w * .38, d.w / 2, .28, 32, 1, true), mat('fabricDS', '#E5DDCB'), 0, d.h - .14, 0); add(g, sp(.04), mat('emit', '#FFE7C2'), 0, d.h - .2, 0); return g; },
+  },
+  {
+    type: 'lampada-sospensione', name: 'Lampada a sospensione', short: 'Sospensione', cat: 'Illuminazione', w: .45, d: .45, h: .9, mount: 'ceiling', snap: false, obstacle: false, colorKind: 'metal', color: '#2B2E31',
+    plan(g, it, d, P) { pCirc(g, 0, 0, d.w / 2); g.fillStyle = P.fillSoft; g.fill(); g.strokeStyle = P.stroke; g.lineWidth = P.lw; g.setLineDash([P.lw * 4, P.lw * 3]); g.stroke(); g.setLineDash([]); pLine(g, -d.w * .2, 0, d.w * .2, 0); pLine(g, 0, -d.w * .2, 0, d.w * .2); },
+    build(it, d) { const g = grp(); const M = mat('metal', colorOf(it)); add(g, cy(.05, .05, .02, 20), M, 0, d.h - .01, 0); add(g, cy(.003, .003, d.h - .2, 6), mat('dark'), 0, (d.h + .2) / 2 - .01, 0); add(g, new THREE.CylinderGeometry(.04, d.w / 2, .2, 32, 1, true), mat('metalDS', colorOf(it)), 0, .1, 0); add(g, sp(.045), mat('emit', '#FFE7C2'), 0, .06, 0); return g; },
+  },
+  {
+    type: 'plafoniera', name: 'Plafoniera LED 60 × 60', short: 'Plafoniera', cat: 'Illuminazione', w: .6, d: .6, h: .04, mount: 'ceiling', snap: false, obstacle: false,
+    plan(g, it, d, P) { pRect(g, -d.w / 2, -d.d / 2, d.w, d.d); g.fillStyle = P.fillSoft; g.fill(); g.strokeStyle = P.stroke; g.lineWidth = P.lw; g.setLineDash([P.lw * 4, P.lw * 3]); g.stroke(); g.setLineDash([]); pLine(g, -d.w / 2, -d.d / 2, d.w / 2, d.d / 2); pLine(g, d.w / 2, -d.d / 2, -d.w / 2, d.d / 2); },
+    build(it, d) { const g = grp(); add(g, bx(d.w, d.h * .6, d.d), mat('plastic', '#F4F4F2'), 0, d.h * .7, 0); add(g, bx(d.w - .02, .004, d.d - .02), mat('emit', '#FFFAF0'), 0, d.h * .38, 0); return g; },
+  },
+  {
+    type: 'lampada-tavolo', name: 'Lampada da tavolo', short: 'Lampada', cat: 'Illuminazione', w: .2, d: .2, h: .45, elev: .75, mount: 'counter', snap: false, obstacle: false, colorKind: 'metal', color: '#2B2E31',
+    plan(g, it, d, P) { pCirc(g, 0, 0, d.w / 2); fs(g, P); },
+    build(it, d) { const g = grp(); const M = mat('metal', colorOf(it)); add(g, cy(.07, .08, .02, 24), M, 0, .01, 0); add(g, cy(.006, .006, d.h - .15, 8), M, 0, (d.h - .15) / 2, 0); add(g, new THREE.CylinderGeometry(.06, d.w / 2, .15, 28, 1, true), mat('fabricDS', '#E5DDCB'), 0, d.h - .075, 0); add(g, sp(.025), mat('emit', '#FFE7C2'), 0, d.h - .1, 0); return g; },
+  },
+  // ---------------- Casa ----------------
+  {
+    type: 'letto-matrimoniale', name: 'Letto matrimoniale', short: 'Letto', cat: 'Casa', w: 1.7, d: 2.1, h: 1.0, snap: true, colorKind: 'fabric', color: '#8E9599',
+    plan: bedPlan, build: bedBuild,
+  },
+  {
+    type: 'letto-singolo', name: 'Letto singolo', short: 'Letto', cat: 'Casa', w: .95, d: 2.05, h: .95, snap: true, colorKind: 'fabric', color: '#3D5A80',
+    plan: bedPlan, build: bedBuild,
+  },
+  {
+    type: 'comodino', name: 'Comodino', short: 'Comodino', cat: 'Casa', w: .45, d: .4, h: .5, snap: true, surface: true, colorKind: 'finish', color: 'wood:oak',
+    plan: cabinetPlan, build(it, d) { const g = grp(); cabinetBody(g, d.w, d.d, d.h, colorOf(it), { drawers: 2, topMat: finishMat(colorOf(it)) }); return g; },
+  },
+  {
+    type: 'cassettiera', name: 'Cassettiera', short: 'Cassettiera', cat: 'Casa', w: 1.0, d: .5, h: .85, snap: true, surface: true, colorKind: 'finish', color: '#F1F1EE',
+    plan: cabinetPlan, build(it, d) { const g = grp(); cabinetBody(g, d.w, d.d, d.h, colorOf(it), { drawers: 4, topMat: finishMat(colorOf(it)) }); return g; },
+  },
+  {
+    type: 'guardaroba', name: 'Armadio guardaroba', short: 'Guardaroba', cat: 'Casa', w: 2.0, d: .6, h: 2.4, snap: true, colorKind: 'finish', color: '#F1F1EE',
+    plan(g, it, d, P) { tallPlan(g, it, d, P); },
+    build(it, d) { const g = grp(); cabinetBody(g, d.w, d.d, d.h, colorOf(it), { doors: Math.max(2, Math.round(d.w / .5)), top: 0, plinth: .06 }); return g; },
+  },
+  {
+    type: 'tavolo-pranzo', name: 'Tavolo da pranzo', short: 'Tavolo', cat: 'Casa', w: 1.6, d: .9, h: .75, snap: false, surface: true, colorKind: 'finish', color: 'wood:walnut',
+    plan: genericPlan,
+    build(it, d) { const g = grp(); add(g, bx(d.w, .04, d.d), finishMat(colorOf(it)), 0, d.h - .02, 0); for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) add(g, bx(.06, d.h - .04, .06), finishMat(colorOf(it)), x * (d.w / 2 - .08), (d.h - .04) / 2, z * (d.d / 2 - .08)); return g; },
+  },
+  {
+    type: 'sedia', name: 'Sedia', short: 'Sedia', cat: 'Casa', w: .45, d: .5, h: .85, snap: false, colorKind: 'finish', color: 'wood:oak',
+    plan(g, it, d, P) { pRRect(g, -d.w / 2, -d.d / 2 + .06, d.w, d.d - .06, .04); fs(g, P); pRect(g, -d.w / 2, -d.d / 2, d.w, .05); fs(g, P); },
+    build(it, d) { const g = grp(); const F = finishMat(colorOf(it)); add(g, bx(d.w, .04, d.d - .04), F, 0, .46, .02); for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) add(g, bx(.035, .44, .035), F, x * (d.w / 2 - .03), .22, z * (d.d / 2 - .04)); for (const x of [-1, 1]) add(g, bx(.035, d.h - .46, .035), F, x * (d.w / 2 - .03), .46 + (d.h - .46) / 2, -d.d / 2 + .04); add(g, bx(d.w - .04, .14, .025), F, 0, d.h - .1, -d.d / 2 + .04); return g; },
+  },
+  {
+    type: 'divano-angolare', name: 'Divano angolare', short: 'Divano', cat: 'Casa', w: 2.6, d: 1.6, h: .8, snap: true, colorKind: 'fabric', color: '#8E9599',
+    plan(g, it, d, P) { const t = .9; g.beginPath(); g.moveTo(-d.w / 2, -d.d / 2); g.lineTo(d.w / 2, -d.d / 2); g.lineTo(d.w / 2, d.d / 2); g.lineTo(d.w / 2 - t, d.d / 2); g.lineTo(d.w / 2 - t, -d.d / 2 + t); g.lineTo(-d.w / 2, -d.d / 2 + t); g.closePath(); fs(g, P); pLine(g, -d.w / 2 + .15, -d.d / 2 + .22, d.w / 2 - .22, -d.d / 2 + .22); pLine(g, d.w / 2 - .22, -d.d / 2 + .22, d.w / 2 - .22, d.d / 2 - .02); },
+    build(it, d) {
+      const g = grp(); const F = mat('fabric', colorOf(it)); const t = .9;
+      add(g, rbx(d.w, .22, t, .03), F, 0, .19, -d.d / 2 + t / 2); add(g, rbx(t, .22, d.d - t, .03), F, d.w / 2 - t / 2, .19, t / 2);
+      add(g, rbx(d.w - .1, d.h - .3, .2, .05), F, -.05, .3 + (d.h - .3) / 2, -d.d / 2 + .1, -.08);
+      add(g, rbx(.2, d.h - .3, d.d - .1, .05), F, d.w / 2 - .1, .3 + (d.h - .3) / 2, .05);
+      add(g, rbx(.16, d.h * .7, t, .04), F, -d.w / 2 + .08, d.h * .35, -d.d / 2 + t / 2);
+      for (let i = 0; i < 3; i++) add(g, rbx((d.w - t - .2) / 3 - .02, .14, t - .25, .05), F, -d.w / 2 + .16 + (d.w - t - .2) / 3 * (i + .5), .37, -d.d / 2 + .2 + (t - .25) / 2);
+      add(g, rbx(t - .25, .14, d.d - .2, .05), F, d.w / 2 - .2 - (t - .25) / 2, .37, .1);
+      return g;
+    },
+  },
+  {
+    type: 'mobile-tv', name: 'Mobile TV', short: 'Mobile TV', cat: 'Casa', w: 1.8, d: .45, h: .5, snap: true, surface: true, colorKind: 'finish', color: 'wood:walnut',
+    plan: cabinetPlan, build(it, d) { const g = grp(); cabinetBody(g, d.w, d.d, d.h, colorOf(it), { drawers: 1, topMat: finishMat(colorOf(it)), plinth: .1 }); return g; },
+  },
+  {
+    type: 'tappeto', name: 'Tappeto', short: 'Tappeto', cat: 'Casa', w: 2.0, d: 1.4, h: .012, snap: false, obstacle: false, colorKind: 'fabric', color: '#C9B79A',
+    plan(g, it, d, P) { pRect(g, -d.w / 2, -d.d / 2, d.w, d.d); g.fillStyle = hexA(colorOf(it), .25); g.fill(); det(g, P, true); pRect(g, -d.w / 2 + .08, -d.d / 2 + .08, d.w - .16, d.d - .16); det(g, P); },
+    build(it, d) { const g = grp(); const m = add(g, bx(d.w, d.h, d.d), mat('fabric', colorOf(it)), 0, d.h / 2, 0); m.castShadow = false; add(g, bx(d.w - .16, .002, d.d - .16), mat('fabric', shade(colorOf(it)[0] === '#' ? colorOf(it) : '#C9B79A', -.15)), 0, d.h + .001, 0).castShadow = false; return g; },
+  },
+  {
+    type: 'cucina', name: 'Cucina (basi, piano cottura, lavello, forno)', short: 'Cucina', cat: 'Casa', w: 2.4, d: .6, h: .9, snap: true, surface: true, colorKind: 'finish', color: '#F1F1EE',
+    plan(g, it, d, P) { cabinetPlan(g, it, d, P); sinkInTop(g, -d.w / 2 + .45, 0, .5, d.d * .62, P); for (const [x, z] of [[.35, -.1], [.6, -.1], [.35, .12], [.6, .12]]) { pCirc(g, x, z, .07); det(g, P); } },
+    build(it, d) {
+      const g = grp(); cabinetBody(g, d.w, d.d, d.h, colorOf(it), { doors: Math.max(3, Math.round(d.w / .6)), topMat: mat('plastic', '#3A3F44') });
+      const sx = -d.w / 2 + .45; add(g, bx(.46, .01, d.d * .5), mat('steel'), sx, d.h + .004, 0);
+      rod(g, [sx, d.h, -d.d / 2 + .06], [sx, d.h + .3, -d.d / 2 + .06], .012, mat('chrome')); rod(g, [sx, d.h + .3, -d.d / 2 + .06], [sx, d.h + .28, -d.d / 2 + .22], .011, mat('chrome'));
+      add(g, bx(.58, .008, .5), mat('dark', '#16191B'), .48, d.h + .004, 0);
+      for (const [x, z] of [[.35, -.1], [.6, -.1], [.35, .12], [.6, .12]]) add(g, cy(.06, .06, .002, 24), mat('dark', '#3B4248'), x, d.h + .009, z);
+      add(g, bx(.58, .45, .01), mat('glass', '#20262A'), .48, .5, d.d / 2 + .002);
+      return g;
+    },
+  },
+  {
+    type: 'frigorifero', name: 'Frigorifero', short: 'Frigo', cat: 'Casa', w: .6, d: .65, h: 1.85, snap: true, colorKind: 'finish', color: '#F1F1EE',
+    plan(g, it, d, P) { tallPlan(g, it, d, P); },
+    build(it, d) { const g = grp(); const F = finishMat(colorOf(it)); add(g, rbx(d.w, d.h, d.d, .015), F, 0, d.h / 2, 0); add(g, bx(d.w - .01, .006, .004), mat('dark'), 0, d.h * .62, d.d / 2 + .002); for (const y of [d.h * .78, d.h * .45]) add(g, bx(.02, .3, .03), mat('steel'), d.w / 2 - .06, y, d.d / 2 + .02); return g; },
+  },
+  {
+    type: 'lavatrice', name: 'Lavatrice', short: 'Lavatrice', cat: 'Casa', w: .6, d: .6, h: .85, snap: true, surface: true,
+    plan(g, it, d, P) { genericPlan(g, it, d, P); pCirc(g, 0, 0, d.w * .3); det(g, P); },
+    build(it, d) { const g = grp(); add(g, rbx(d.w, d.h, d.d, .015), mat('plastic', '#F6F6F4'), 0, d.h / 2, 0); add(g, cy(d.w * .3, d.w * .3, .03, 32), mat('steel', '#C8CED1'), 0, d.h * .45, d.d / 2, Math.PI / 2); add(g, cy(d.w * .24, d.w * .24, .01, 32), mat('glass', '#3A4A52'), 0, d.h * .45, d.d / 2 + .016, Math.PI / 2); frontPanel(g, d.w * .8, .08, d.h - .07, d.d / 2 + .002, mat('plastic', '#E3E6E8')); return g; },
+  },
+  {
+    type: 'scarpiera', name: 'Scarpiera', short: 'Scarpiera', cat: 'Casa', w: .8, d: .3, h: 1.0, snap: true, surface: true, colorKind: 'finish', color: '#F1F1EE',
+    plan: cabinetPlan, build(it, d) { const g = grp(); cabinetBody(g, d.w, d.d, d.h, colorOf(it), { drawers: 3, topMat: finishMat(colorOf(it)) }); return g; },
+  },
+  // ---------------- Bagno ----------------
+  {
+    type: 'vasca', name: 'Vasca da bagno', short: 'Vasca', cat: 'Bagno', w: 1.7, d: .75, h: .58, snap: true,
+    plan(g, it, d, P) { pRRect(g, -d.w / 2, -d.d / 2, d.w, d.d, .05); fs(g, P); pRRect(g, -d.w / 2 + .07, -d.d / 2 + .07, d.w - .14, d.d - .14, .2); det(g, P); pCirc(g, -d.w / 2 + .2, 0, .025); det(g, P); },
+    build(it, d) { const g = grp(); const C = mat('ceramic'); add(g, rbx(d.w, d.h, d.d, .04), C, 0, d.h / 2, 0); add(g, rbx(d.w - .12, .01, d.d - .12, .005), mat('ceramic', '#E3E9EA'), 0, d.h + .001, 0); rod(g, [-d.w / 2 + .1, d.h, -d.d / 2 + .05], [-d.w / 2 + .1, d.h + .2, -d.d / 2 + .05], .012, mat('chrome')); return g; },
+  },
+  {
+    type: 'scaldasalviette', name: 'Termoarredo scaldasalviette', short: 'Scaldasalviette', cat: 'Bagno', w: .5, d: .1, h: 1.2, elev: .15, mount: 'wall', snap: true,
+    plan(g, it, d, P) { pRect(g, -d.w / 2, -d.d / 2, d.w, d.d); fs(g, P); },
+    build(it, d) { const g = grp(); const M = mat('plastic', '#F4F4F2'); for (const s of [-1, 1]) add(g, cy(.015, .015, d.h, 10), M, s * (d.w / 2 - .02), d.h / 2, .02); for (let i = 0; i < 16; i++) add(g, cy(.008, .008, d.w - .04, 8), M, 0, .05 + i * (d.h - .1) / 15, .03, 0, 0, Math.PI / 2); return g; },
+  },
+);
+
+function bedPlan(g, it, d, P) {
+  pRRect(g, -d.w / 2, -d.d / 2, d.w, d.d, .04); fs(g, P);
+  pRect(g, -d.w / 2, -d.d / 2, d.w, .06); fs(g, P);
+  const pw = d.w > 1.2 ? (d.w - .2) / 2 : d.w - .2;
+  for (let i = 0; i < (d.w > 1.2 ? 2 : 1); i++) { pRRect(g, -d.w / 2 + .1 + i * (pw + .0), -d.d / 2 + .12, pw - .04, .32, .06); det(g, P); }
+  pLine(g, -d.w / 2, -d.d / 2 + .6, d.w / 2, -d.d / 2 + .6);
+}
+function bedBuild(it, d) {
+  const g = grp(); const F = mat('fabric', colorOf(it)); const W = mat('matte', '#F4F2EC');
+  add(g, rbx(d.w, .3, d.d - .06, .03), F, 0, .15 + .05, .03);
+  add(g, rbx(d.w - .04, .2, d.d - .12, .06), W, 0, .45, .04);
+  add(g, rbx(d.w + .02, d.h, .08, .03), F, 0, d.h / 2, -d.d / 2 + .04);
+  const n = d.w > 1.2 ? 2 : 1; const pw = (d.w - .2) / n;
+  for (let i = 0; i < n; i++) add(g, rbx(pw - .06, .12, .34, .06), W, -d.w / 2 + .1 + pw * (i + .5), .6, -d.d / 2 + .3);
+  add(g, rbx(d.w - .02, .05, d.d * .55, .02), F, 0, .57, d.d * .2);
+  return g;
+}
+
+// ===================== catalog index =====================
+for (const c of CATALOG) CAT_BY_TYPE[c.type] = c;
 
 // ===================== state & model =====================
 const S = {
@@ -787,9 +1174,10 @@ const S = {
   pipeOpts: { kind: 'acqua' },
   view3d: { walls: 'full', zones: true, utilities: true, shadows: true },
   walk: { eye: 1.65 },
+  recent: (() => { try { const v = JSON.parse(localStorage.getItem('ps-recent') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(),
 };
 const PHASES = { fatto: 'Stato di fatto', confronto: 'Gialli e rossi', progetto: 'Progetto' };
-const PIPE_KINDS = { acqua: ['Acqua', 'water'], scarico: ['Scarico', 'drain'], aria: ['Aria compressa', 'air'], aspirazione: ['Aspirazione', 'suction'], elettrico: ['Elettrico', 'power'] };
+const PIPE_KINDS = { acqua: ['Acqua', 'water'], scarico: ['Scarico', 'drain'], aria: ['Aria compressa', 'air'], aspirazione: ['Aspirazione', 'suction'], elettrico: ['Elettrico', 'power'], usb: ['Cavo USB-C / dati', 'ink-2'] };
 const OPEN_KINDS = { porta: 'Porta a battente', scorrevole: 'Porta scorrevole esterna', scomparsa: 'Porta a scomparsa', varco: 'Varco', finestra: 'Finestra', portafinestra: 'Portafinestra' };
 const WALL_TYPES = { muratura: 'Muratura', cartongesso: 'Cartongesso', parapetto: 'Parapetto' };
 
@@ -801,7 +1189,7 @@ function pipeVisible(p, ph = phase()) { return ph !== 'fatto' || p.status === 'e
 
 function normalizeProject(p) {
   p.walls ||= []; p.openings ||= []; p.items ||= []; p.rooms ||= []; p.pipes ||= []; p.dims ||= [];
-  p.settings = Object.assign({ wallH: 2.7, bgOpacity: .55, showBg: true, phase: 'progetto', grid: true, autoDims: true, prices: {} }, p.settings || {});
+  p.settings = Object.assign({ wallH: 2.7, bgOpacity: .55, showBg: true, phase: 'progetto', grid: true, autoDims: true, itemLabels: false, prices: {} }, p.settings || {});
   p.settings.prices ||= {};
   p.bg ||= null; p.kind = 'project'; p.version = 1;
   for (const w of p.walls) { w.status ||= 'esistente'; w.type ||= 'muratura'; }
@@ -1075,6 +1463,39 @@ function findSel(sel) {
   if (!sel) return null; const p = S.project;
   const arr = { wall: p.walls, opening: p.openings, item: p.items, room: p.rooms, pipe: p.pipes, dim: p.dims }[sel.kind];
   return arr ? arr.find((x) => x.id === sel.id) : null;
+}
+
+// ---------- items resting on other items, linked cables ----------
+function surfaceUnder(pt, except) { // top of the highest cabinet/desk/table under a point
+  let top = null;
+  for (const it of S.project.items) {
+    if (it === except || !itemVisible(it)) continue; const c = catOf(it); if (!c.surface) continue;
+    if (!itemContains(it, pt)) continue;
+    const h = elevOf(it) + (c.surfaceH ?? dimsOf(it).h); if (top == null || h > top) top = h;
+  }
+  return top;
+}
+function settleOnSurface(it) { const c = catOf(it); if (c.mount !== 'counter') return; const top = surfaceUnder(it, it); if (top != null) it.elev = Math.round(top * 1000) / 1000; else if (it.elev == null) it.elev = c.elev; }
+function cableOf(it) { return S.project.pipes.find((p) => p.kind === 'usb' && p.link && p.link.from === it.id); }
+function syncCables() { // linked cables follow the devices they connect
+  const p = S.project; if (!p) return;
+  for (const pp of p.pipes) {
+    if (!pp.link) continue;
+    const a = p.items.find((x) => x.id === pp.link.from), b = p.items.find((x) => x.id === pp.link.to);
+    if (!a || !b) { delete pp.link; continue; }
+    const first = pp.pts[0], last = pp.pts[pp.pts.length - 1];
+    if (V.dist(first, a) < 1e-4 && V.dist(last, b) < 1e-4) continue;
+    if (pp.auto) pp.pts = [{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }];
+    else { first.x = a.x; first.y = a.y; last.x = b.x; last.y = b.y; }
+  }
+}
+function cableNeeds(it) {
+  const cab = cableOf(it); if (!cab) return null;
+  const pc = S.project.items.find((x) => x.id === cab.link.to);
+  let L = 0; for (let i = 1; i < cab.pts.length; i++) L += V.dist(cab.pts[i - 1], cab.pts[i]);
+  const up = elevOf(it) + .03, port = pc ? (catOf(pc).pcPort ?? elevOf(pc) + .1) : .35;
+  const direct = pc ? Math.hypot(V.dist(it, pc), up - port) : L;
+  return { floor: L + up + port, direct, pc, cab };
 }
 
 // ===================== persistence =====================
@@ -1478,7 +1899,8 @@ const Plan = {
     const type = S.placing; const c = CAT_BY_TYPE[type]; const sn = placeSnap(type, w);
     const it = { id: uid('i'), type, x: sn.x, y: sn.y, rot: sn.rot ?? 0, phase: phase() === 'fatto' ? 'esistente' : 'nuovo' };
     if (c.mount === 'wall' || c.mount === 'counter') it.elev = c.elev;
-    commit((p) => p.items.push(it));
+    commit((p) => { p.items.push(it); settleOnSurface(it); });
+    pushRecent(type);
     S.sel = { kind: 'item', id: it.id };
     if (!(e && e.shiftKey)) { S.placing = null; refreshLibrary(); }
     setTab('props'); toast(c.name + ' aggiunto' + (S.placing ? ' · tocca ancora per aggiungerne un altro' : ''));
@@ -1616,7 +2038,7 @@ const TOOLS = {
       if (d.type === 'item') {
         const it = d.item; const target = V.add(d.p0, V.sub(w, d.w0));
         const sn = placeSnap(it.type, target, it);
-        it.x = sn.x; it.y = sn.y; if (sn.wall) it.rot = sn.rot;
+        it.x = sn.x; it.y = sn.y; if (sn.wall) it.rot = sn.rot; settleOnSurface(it);
         this.snap = sn.wall ? { x: sn.x, y: sn.y, kind: 'wall' } : null;
       } else if (d.type === 'rot') {
         const it = d.item; let a = Math.atan2(w.y - it.y, w.x - it.x) / DEG - 90;
@@ -1639,7 +2061,7 @@ const TOOLS = {
       } else if (d.type === 'pipe') {
         const delta = V.sub(w, d.w0); d.pipe.pts.forEach((q, i) => { q.x = d.pts0[i].x + delta.x; q.y = d.pts0[i].y + delta.y; });
       } else if (d.type === 'vertex') {
-        const pts = d.isDim ? [d.obj.a, d.obj.b] : d.obj.pts; const from = pts[d.i - 1] || pts[d.i + 1];
+        const pts = d.isDim ? [d.obj.a, d.obj.b] : d.obj.pts; const from = pts[d.i - 1] || pts[d.i + 1]; if (!d.isDim) d.obj.auto = false;
         const sn = snapPoint(w, { from, items: !d.isDim, skip: [] }); this.snap = sn; pts[d.i].x = sn.x; pts[d.i].y = sn.y;
       } else if (d.type === 'dimmove') {
         const delta = V.sub(w, d.w0); d.dim.a.x = d.a0.x + delta.x; d.dim.a.y = d.a0.y + delta.y; d.dim.b.x = d.b0.x + delta.x; d.dim.b.y = d.b0.y + delta.y;
@@ -1789,7 +2211,7 @@ function addOpening(pv, tool) {
 // ---------------- the renderer (shared by screen, minimap and export) ----------------
 function renderPlan(g, view, opt = {}) {
   const p = S.project; const { scale, ox, oy, W, H } = view;
-  const ph = opt.phase || phase();
+  const ph = opt.phase || phase(); syncCables();
   const w2s = (q) => ({ x: ox + q.x * scale, y: oy + q.y * scale });
   const K = opt.k || 1; const px = K / scale; // one css pixel in meters (×K for print)
   g.save();
@@ -1838,7 +2260,8 @@ function renderPlan(g, view, opt = {}) {
     const [, tok] = PIPE_KINDS[pp.kind] || ['', 'water']; const col = PAL[tok];
     const sel = S.sel && S.sel.kind === 'pipe' && S.sel.id === pp.id && opt.interactive;
     g.strokeStyle = col; g.lineWidth = (sel ? 5 : 3.2) * px; g.lineCap = 'round'; g.lineJoin = 'round';
-    g.setLineDash(pp.kind === 'scarico' ? [10 * px, 5 * px] : pp.kind === 'elettrico' ? [3 * px, 4 * px] : pp.kind === 'aspirazione' ? [12 * px, 4 * px, 2 * px, 4 * px] : []);
+    if (pp.kind === 'usb') g.lineWidth = (sel ? 3.5 : 2) * px;
+    g.setLineDash(pp.kind === 'scarico' ? [10 * px, 5 * px] : pp.kind === 'elettrico' ? [3 * px, 4 * px] : pp.kind === 'aspirazione' ? [12 * px, 4 * px, 2 * px, 4 * px] : pp.kind === 'usb' ? [6 * px, 3 * px] : []);
     g.beginPath(); g.moveTo(pp.pts[0].x, pp.pts[0].y); for (const q of pp.pts.slice(1)) g.lineTo(q.x, q.y); g.stroke(); g.setLineDash([]);
     if (ph === 'confronto' && pp.status === 'nuovo') { g.strokeStyle = hexA(PAL.new, .35); g.lineWidth = 8 * px; g.stroke(); }
   }
@@ -1929,6 +2352,19 @@ function renderPlan(g, view, opt = {}) {
       g.fillStyle = hexA(opt.export ? '#ffffff' : PAL.sheet, .78); g.fillRect(s.x - bw / 2, s.y - bk - 2 * K, bw, bk * 2.1 + 4 * K);
       g.font = fontL(big, 600); g.fillStyle = opt.export ? '#1B2427' : PAL.ink; g.fillText(r.name, s.x, s.y - bk * .45);
       g.font = fontL(big * .85, 500); g.fillStyle = st && st.open ? PAL.warn : (opt.export ? '#46555A' : PAL['ink-2']); g.fillText(area, s.x, s.y + bk * .6);
+    }
+  }
+  // furniture names
+  if (!opt.mini && p.settings.itemLabels) {
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (const it of p.items) {
+      if (!itemVisible(it, ph)) continue; const c = catOf(it); if (c.utility || c.type === 'tappeto') continue;
+      const d = dimsOf(it); const big = Math.max(d.w, d.d) * scale; if (big < 22) continue;
+      const s = w2s(it); let txt = it.label || shortName(c); g.font = fontL(10.5, 600);
+      const maxW = Math.max(54 * K, big * 1.1); while (txt.length > 3 && g.measureText(txt).width > maxW) txt = txt.slice(0, -2) + '…';
+      const tw = g.measureText(txt).width + 8 * K;
+      g.fillStyle = hexA(opt.export ? '#ffffff' : PAL.chrome, .88); g.fillRect(s.x - tw / 2, s.y - 7.5 * K, tw, 15 * K);
+      g.fillStyle = DENTAL_CATS.has(c.cat) ? (opt.export ? '#0E6B70' : PAL.accent) : (opt.export ? '#1B2427' : PAL.ink); g.fillText(txt, s.x, s.y + .5 * K);
     }
   }
   // pipe lengths
@@ -2038,7 +2474,7 @@ function drawItem(g, it, px, ph, opt, conflict) {
   const sel = S.sel && S.sel.kind === 'item' && S.sel.id === it.id && opt.interactive;
   const hov = S.hover && S.hover.kind === 'item' && S.hover.id === it.id && opt.interactive && !sel;
   g.save(); g.translate(it.x, it.y); g.rotate(it.rot * DEG);
-  const isOp = ['Sala operativa', 'Radiologia', 'Sterilizzazione'].includes(c.cat);
+  const isOp = DENTAL_CATS.has(c.cat);
   const P = {
     fill: opt.export ? (isOp ? '#E6F1F1' : '#FFFFFF') : (isOp ? hexA(PAL.accent, PAL.dark ? .22 : .10) : PAL.chrome),
     fillSoft: opt.export ? '#F3F6F6' : hexA(PAL.ink, .04),
@@ -2343,7 +2779,7 @@ const View3D = {
   },
   rebuild() {
     this.dirty = false; if (!S.project) return;
-    readPalette(); this.clearWorld();
+    readPalette(); syncCables(); this.clearWorld();
     const p = S.project, ph = phase(); const walk = S.view === 'walk';
     this.scene.background = new THREE.Color(PAL.scene);
     this.renderer.shadowMap.enabled = !!S.view3d.shadows && QUALITY[this.q].shadows > 0;
@@ -2548,7 +2984,7 @@ const View3D = {
     const pt = new THREE.Vector3(); if (!this.ray(e).ray.intersectPlane(d.plane, pt)) return;
     if (!d.moved) { d.moved = true; pushUndo(); }
     const target = { x: pt.x + d.off.x, y: pt.z + d.off.z }; const sn = placeSnap(d.it.type, target, d.it);
-    d.it.x = sn.x; d.it.y = sn.y; if (sn.wall) d.it.rot = sn.rot; this.liveItem(d.it);
+    d.it.x = sn.x; d.it.y = sn.y; if (sn.wall) d.it.rot = sn.rot; settleOnSurface(d.it); this.liveItem(d.it);
   },
   onUp(e) {
     if (e.pointerType === 'touch') this._touches = Math.max(0, (this._touches || 1) - 1);
@@ -2840,9 +3276,12 @@ function renderLibrary(body) {
   const search = el('input', { class: 'inp', id: 'libSearch', type: 'search', placeholder: 'Cerca: riunito, autoclave, divano…', value: S.libQuery, 'aria-label': 'Cerca negli arredi' });
   search.addEventListener('input', () => { S.libQuery = search.value; const pos = search.selectionStart; refreshPanel(true); const s2 = $('#libSearch'); s2.focus(); try { s2.setSelectionRange(pos, pos); } catch { } });
   body.append(el('div', { class: 'lib-search' }, search));
-  const cats = ['Tutti', ...CATS];
+  const recent = S.recent.map((t) => CAT_BY_TYPE[t]).filter(Boolean);
+  if (S.libCat === 'Recenti' && !recent.length) S.libCat = 'Tutti';
+  const cats = [...(recent.length ? ['Recenti'] : []), 'Tutti', ...CATS];
   body.append(el('div', { class: 'lib-cats' }, ...cats.map((c) => chip(c, S.libCat === c, () => { S.libCat = c; refreshPanel(true); }))));
-  const list = CATALOG.filter((c) => (S.libCat === 'Tutti' || c.cat === S.libCat) && (!q || (c.name + ' ' + c.cat).toLowerCase().includes(q)));
+  const pool = S.libCat === 'Recenti' ? recent : CATALOG;
+  const list = pool.filter((c) => (S.libCat === 'Tutti' || S.libCat === 'Recenti' || c.cat === S.libCat) && (!q || (c.name + ' ' + c.cat).toLowerCase().includes(q)));
   if (!list.length) { body.append(el('div', { class: 'empty' }, 'Nessun elemento trovato')); return; }
   const groups = S.libCat === 'Tutti' && !q ? CATS : [null];
   for (const gname of groups) {
@@ -2885,7 +3324,7 @@ function addItemAtCenter(type) {
   const sn = placeSnap(type, { x, y });
   const it = { id: uid('i'), type, x: sn.x, y: sn.y, rot: sn.rot || 0, phase: phase() === 'fatto' ? 'esistente' : 'nuovo' };
   if (c.mount === 'wall' || c.mount === 'counter') it.elev = c.elev;
-  commit((p) => p.items.push(it)); S.sel = { kind: 'item', id: it.id }; selectionChanged(); toast(c.name + ' aggiunto: trascinalo dove serve');
+  commit((p) => { p.items.push(it); settleOnSurface(it); }); pushRecent(type); S.sel = { kind: 'item', id: it.id }; selectionChanged(); toast(c.name + ' aggiunto: trascinalo dove serve');
 }
 
 // ---------- form helpers ----------
@@ -2970,6 +3409,7 @@ function renderItemProps(body, it) {
   body.append(s1);
   const pal = paletteFor(c.colorKind);
   if (pal) body.append(el('div', { class: 'sec' }, el('div', { class: 'sec-title' }, c.colorKind === 'uph' ? 'Tappezzeria' : c.colorKind === 'fabric' ? 'Tessuto' : 'Finitura'), swatchPick(pal, colorOf(it), (v) => upd(() => { it.color = v; }), !String(colorOf(it)).startsWith('wood:') || true)));
+  if (c.cable) renderCableSection(body, it);
   if (it.type === 'riunito') {
     const sz = el('div', { class: 'sec' }, el('div', { class: 'sec-title' }, 'Zone di lavoro'));
     sz.append(segPick([['dx', 'Destrimane'], ['sx', 'Mancino']], it.hand === 'sx' ? 'sx' : 'dx', (v) => upd(() => { it.hand = v; })));
@@ -3172,6 +3612,7 @@ function renderProjectTab(body) {
   vis.append(el('div', { class: 'row' },
     chip('Griglia', p.settings.grid, () => { p.settings.grid = !p.settings.grid; markDirty(); refreshPanel(true); requestRender(); }),
     chip('Lunghezze muri', p.settings.autoDims, () => { p.settings.autoDims = !p.settings.autoDims; markDirty(); refreshPanel(true); requestRender(); }),
+    chip('Nomi degli arredi', p.settings.itemLabels, () => { p.settings.itemLabels = !p.settings.itemLabels; markDirty(); refreshPanel(true); requestRender(); }),
     chip('Zone di lavoro', S.view3d.zones, () => { S.view3d.zones = !S.view3d.zones; schedule3D(); refreshPanel(true); requestRender(); refreshHud3D(); }),
     chip('Planimetria di sfondo', p.settings.showBg, () => { p.settings.showBg = !p.settings.showBg; markDirty(); refreshPanel(true); requestRender(); }),
   ));
@@ -3327,6 +3768,42 @@ function openHelp() {
     sh.append(el('div', { class: 'help-grid' }, ...rows.flatMap(([k, v]) => [el('kbd', {}, k), el('span', {}, v)])));
     sh.append(el('p', { class: 'note' }, 'Passeggiata: WASD o frecce per muoverti, trascina per guardarti intorno; su iPad usa il joystick in basso a sinistra e tocca la mappa per spostarti.'));
   });
+}
+
+// ---------- recently used furniture ----------
+function pushRecent(type) {
+  S.recent = [type, ...S.recent.filter((t) => t !== type)].slice(0, 10);
+  try { localStorage.setItem('ps-recent', JSON.stringify(S.recent)); } catch { }
+}
+
+// ---------- scanner ↔ computer cable ----------
+function renderCableSection(body, it) {
+  const sec = el('div', { class: 'sec' }, el('div', { class: 'sec-title' }, 'Collegamento al computer'));
+  const need = cableNeeds(it); const avail = it.cableLen ?? 2;
+  sec.append(el('div', { class: 'grid2' },
+    field('Lunghezza del tuo cavo', numInput(avail, (v) => upd(() => { it.cableLen = clamp(v, .3, 30); }), { unit: 'm', factor: 1, digits: 1 })),
+    el('div', { style: { display: 'flex', alignItems: 'flex-end' } }, el('button', { class: 'btn small', type: 'button', onclick: () => connectToPC(it) }, need ? 'Ricollega al PC più vicino' : 'Collega al PC'))));
+  if (!need) sec.append(el('p', { class: 'note' }, 'Il cavo parte dallo scanner e arriva al computer (case a terra) più vicino. Puoi poi spostarne i punti per seguire il percorso reale.'));
+  else {
+    const okFloor = need.floor <= avail, okDirect = need.direct <= avail;
+    const cls = okFloor ? 'ok-box' : okDirect ? 'warn-box' : 'warn-box bad';
+    const msg = okFloor ? `Il cavo basta: ne servono circa ${nf1.format(need.floor)} m seguendo il percorso disegnato.`
+      : okDirect ? `Seguendo il percorso disegnato servono circa ${nf1.format(need.floor)} m: il cavo da ${nf1.format(avail)} m basta solo in linea d'aria (${nf1.format(need.direct)} m). Avvicina il computer o accorcia il percorso.`
+        : `Il cavo non basta: servono circa ${nf1.format(need.floor)} m lungo il percorso e ${nf1.format(need.direct)} m anche in linea d'aria. Avvicina il computer allo scanner.`;
+    sec.append(el('div', { class: cls }, msg));
+    sec.append(el('p', { class: 'note' }, 'Il calcolo include la discesa dallo scanner al pavimento e la risalita alla presa del computer. Le specifiche USB Type-C prevedono cavi passivi fino a 2 m per USB 3.1 Gen 1 e 1 m per Gen 2 (fino a 4 m solo per USB 2.0): per distanze maggiori chiedi al produttore dello scanner se ammette un cavo attivo.'));
+  }
+  body.append(sec);
+}
+function connectToPC(it) {
+  const pcs = S.project.items.filter((x) => x.type === 'pc-tower' && itemVisible(x));
+  if (!pcs.length) { toast('Aggiungi prima un “Computer (case a terra)” dalla categoria Informatica', 4000); return; }
+  const pc = pcs.sort((a, b) => V.dist(a, it) - V.dist(b, it))[0];
+  commit((p) => {
+    p.pipes = p.pipes.filter((q) => !(q.kind === 'usb' && q.link && q.link.from === it.id));
+    p.pipes.push({ id: uid('p'), kind: 'usb', auto: true, link: { from: it.id, to: pc.id }, status: phase() === 'fatto' ? 'esistente' : 'nuovo', pts: [{ x: it.x, y: it.y }, { x: pc.x, y: it.y }, { x: pc.x, y: pc.y }] });
+  });
+  toast('Cavo collegato: trascina i punti del cavo per seguire il percorso reale');
 }
 
 // ===================== export / import =====================
@@ -3590,7 +4067,7 @@ function makeZip(files) { // stored (no compression), enough for one or two file
 // ---------- DXF (R12 ASCII, metres, one layer per meaning) ----------
 const DXF_LAYERS = [
   ['MURI_ESISTENTI', 7], ['MURI_DA_DEMOLIRE', 2], ['MURI_NUOVI', 1], ['CARTONGESSO', 8], ['APERTURE', 5], ['ARREDI', 3], ['ATTREZZATURE_DENTALI', 4],
-  ['STANZE', 6], ['QUOTE', 30], ['IMP_ACQUA', 150], ['IMP_SCARICO', 34], ['IMP_ARIA', 130], ['IMP_ASPIRAZIONE', 200], ['IMP_ELETTRICO', 40], ['ZONE_LAVORO', 9],
+  ['STANZE', 6], ['QUOTE', 30], ['IMP_ACQUA', 150], ['IMP_SCARICO', 34], ['IMP_ARIA', 130], ['IMP_ASPIRAZIONE', 200], ['IMP_ELETTRICO', 40], ['IMP_DATI', 250], ['ZONE_LAVORO', 9],
 ];
 function exportDXF() {
   const p = S.project; const ph = phase(); const out = [];
@@ -3629,7 +4106,7 @@ function exportDXF() {
   }
   for (const it of p.items) {
     if (!itemVisible(it, ph)) continue; const c = catOf(it);
-    const layer = ['Sala operativa', 'Radiologia', 'Sterilizzazione', 'Sala tecnica'].includes(c.cat) ? 'ATTREZZATURE_DENTALI' : c.utility ? 'IMP_' + ({ water: 'ACQUA', drain: 'SCARICO', air: 'ARIA', suction: 'ASPIRAZIONE', power: 'ELETTRICO' }[c.util] || 'ELETTRICO') : 'ARREDI';
+    const layer = DENTAL_CATS.has(c.cat) ? 'ATTREZZATURE_DENTALI' : c.utility ? 'IMP_' + ({ water: 'ACQUA', drain: 'SCARICO', air: 'ARIA', suction: 'ASPIRAZIONE', power: 'ELETTRICO' }[c.util] || 'ELETTRICO') : 'ARREDI';
     poly(layer, itemCorners(it)); const d = dimsOf(it);
     text(layer, { x: it.x, y: it.y }, Math.min(.12, Math.max(.05, Math.min(d.w, d.d) * .18)), it.label || c.name);
   }
@@ -3640,7 +4117,7 @@ function exportDXF() {
   }
   const rr = computeRooms(ph);
   for (const r of p.rooms) { const st = rr.rooms.get(r.id); if (!st || st.open || st.shared) continue; const at = st.label || r.seed; text('STANZE', { x: at.x, y: at.y - .12 }, .16, r.name); text('STANZE', { x: at.x, y: at.y + .12 }, .12, nf2.format(st.area) + ' mq'); }
-  for (const pp of p.pipes) { if (!pipeVisible(pp, ph)) continue; const layer = 'IMP_' + ({ acqua: 'ACQUA', scarico: 'SCARICO', aria: 'ARIA', aspirazione: 'ASPIRAZIONE', elettrico: 'ELETTRICO' }[pp.kind]); poly(layer, pp.pts, false); }
+  for (const pp of p.pipes) { if (!pipeVisible(pp, ph)) continue; const layer = 'IMP_' + ({ acqua: 'ACQUA', scarico: 'SCARICO', aria: 'ARIA', aspirazione: 'ASPIRAZIONE', elettrico: 'ELETTRICO', usb: 'DATI' }[pp.kind] || 'DATI'); poly(layer, pp.pts, false); }
   for (const dm of p.dims) { line('QUOTE', dm.a, dm.b); text('QUOTE', { x: (dm.a.x + dm.b.x) / 2, y: (dm.a.y + dm.b.y) / 2 - .1 }, .1, nf2.format(V.dist(dm.a, dm.b))); }
   const head = ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1009', '9', '$INSUNITS', '70', '6', '0', 'ENDSEC',
     '0', 'SECTION', '2', 'TABLES', '0', 'TABLE', '2', 'LAYER', '70', String(DXF_LAYERS.length)];
@@ -3826,6 +4303,6 @@ async function boot() {
   if (S.project._unsaved) { $('#saveState .txt').textContent = 'Modello non salvato'; $('#saveState').title = 'Si salva alla prima modifica. ' + Store.label(); }
   if (!S.projects.length && !SEEDS.templates.length) openWelcome();
 }
-window.__planner = { S, Plan, View3D, commit, setView, setPhase, setTool, Store, parseFirebaseConfig };
+window.__planner = { S, Plan, View3D, commit, setView, setPhase, setTool, Store, parseFirebaseConfig, CAT_BY_TYPE, CATALOG, settleOnSurface, connectToPC, cableNeeds, selectionChanged, elevOf, dimsOf };
 boot();
 
