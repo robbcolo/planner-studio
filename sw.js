@@ -1,5 +1,5 @@
 // Planner Studio Dentistico — offline cache
-const VERSION = 'planner-studio-v6';
+const VERSION = 'planner-studio-v7';
 const SHELL = [
   './', './index.html', './style.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
