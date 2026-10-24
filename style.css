@@ -441,6 +441,24 @@ button.list-row:hover { background: var(--accent-weak); }
   .joystick { width: 110px; height: 110px; }
   .only-narrow { display: inline-flex !important; }
 }
+.phase button .l-short { display: none; }
+/* phones: the top bar fits in two rows (project + actions, views + phases) */
+@media (max-width: 600px) {
+  .topbar { gap: 6px; row-gap: 8px; }
+  .topbar { flex-wrap: wrap; }
+  .proj-btn { order: 0; flex: 1 1 130px; min-width: 0; padding: 4px 8px 4px 4px; gap: 8px; }
+  .proj-kicker { display: none; }
+  .mark { width: 28px; height: 28px; }
+  .top-actions { order: 1; gap: 4px; }
+  .top-actions .icon-btn { width: 34px; height: 34px; }
+  #exportBtn { padding: 7px 8px; }
+  .save-state { display: none; }
+  .seg.view { order: 2; }
+  .seg.phase { order: 3; flex: 1 1 200px; min-width: 0; }
+  .seg.phase button { flex: 1 1 0; justify-content: center; padding: 6px 4px; min-width: 0; }
+  .phase .l-long { display: none !important; }
+  .phase .l-short { display: inline !important; overflow: hidden; text-overflow: ellipsis; }
+}
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }

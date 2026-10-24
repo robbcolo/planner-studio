@@ -38,9 +38,9 @@
       <button type="button" data-view="walk" aria-pressed="false" title="Passeggiata (3)"><span data-ico="walk"></span><span class="lbl">Passeggiata</span></button>
     </div>
     <div class="seg phase" id="phaseSeg" role="group" aria-label="Fase">
-      <button type="button" data-phase="fatto" aria-pressed="false" title="Stato di fatto"><span class="lbl">Stato di fatto</span></button>
-      <button type="button" data-phase="confronto" aria-pressed="false" title="Demolizioni in giallo, nuove opere in rosso"><span class="lbl">Gialli e rossi</span></button>
-      <button type="button" data-phase="progetto" aria-pressed="true" title="Progetto"><span class="lbl">Progetto</span></button>
+      <button type="button" data-phase="fatto" aria-pressed="false" title="Stato di fatto"><span class="lbl l-long">Stato di fatto</span><span class="lbl l-short">Esistente</span></button>
+      <button type="button" data-phase="confronto" aria-pressed="false" title="Demolizioni in giallo, nuove opere in rosso"><span class="lbl l-long">Gialli e rossi</span><span class="lbl l-short">Confronto</span></button>
+      <button type="button" data-phase="progetto" aria-pressed="true" title="Progetto"><span class="lbl l-long">Progetto</span><span class="lbl l-short">Progetto</span></button>
     </div>
     <div class="spacer"></div>
     <div class="top-actions">
@@ -71,7 +71,7 @@
         <div class="walk-top" id="walkTop"></div>
         <div class="joystick" id="joystick"><div class="knob" id="knob"></div></div>
         <div class="minimap" id="minimap"><canvas id="miniCanvas"></canvas></div>
-        <div class="walk-hint" id="walkHint">WASD o joystick per muoverti · trascina per guardarti intorno</div>
+        <div class="walk-hint" id="walkHint">Trascina per guardarti intorno · tocca il pavimento per andarci · joystick, WASD o frecce per muoverti</div>
       </div>
       <div class="loading-3d" id="loading3d" hidden>Preparo la vista 3D…</div>
       <div class="err3d" id="err3d" hidden></div>
