@@ -89,6 +89,8 @@ const ICONS = {
   cube: '<path d="M10 2.5l7 4v7l-7 4-7-4v-7z"/><path d="M3 6.5l7 4 7-4M10 10.5v7"/>',
   walk: '<circle cx="11" cy="3.5" r="1.6"/><path d="M8 18l2.5-6 2.5 2.5V18M10.5 12l.8-5.5-3.3 2V12M11.3 6.5l2.7 2.5 2.5.5"/>',
   undo: '<path d="M7 5L3 9l4 4"/><path d="M3 9h9a5 5 0 0 1 0 10H8"/>',
+  rotate: '<path d="M16 3.5v4.5h-4.5"/><path d="M15.6 8A6.5 6.5 0 1 0 16.4 12.5"/>',
+  edit: '<path d="M4 16.5l.8-3.6L13 4.7l2.8 2.8-8.2 8.2z"/><path d="M11.3 6.4l2.8 2.8"/>',
   redo: '<path d="M13 5l4 4-4 4"/><path d="M17 9H8a5 5 0 0 0 0 10h4"/>',
   download: '<path d="M10 3v10M6 9l4 4 4-4M4 16h12"/>',
   panel: '<rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M12.5 3.5v13"/>',
@@ -1777,7 +1779,7 @@ function commit(fn, opts = {}) { pushUndo(); fn(S.project); changed(opts); }
 function changed(opts = {}) {
   S.rev++; invalidateRooms(); markDirty();
   if (!opts.noRender) requestRender();
-  schedule3D(); if (!opts.keepPanel) refreshPanel(); updateUndoButtons();
+  schedule3D(); if (!opts.keepPanel) refreshPanel(); updateUndoButtons(); if (typeof refreshSelBar === 'function') refreshSelBar();
 }
 function undo() { if (!S.undo.length) return; S.redo.push(snapshot()); restoreSnap(S.undo.pop()); validateSel(); changed(); }
 function redo() { if (!S.redo.length) return; S.undo.push(snapshot()); restoreSnap(S.redo.pop()); validateSel(); changed(); }
@@ -2227,6 +2229,7 @@ const Plan = {
   cv: null, g: null, dpr: 1, W: 0, H: 0, scale: 50, ox: 0, oy: 0, pending: false,
   pointers: new Map(), pinch: null, pan: null, drag: null, cursor: null, snap: null, spaceDown: false,
   chain: [], measureA: null, calA: null, lenBuf: '', lastTap: 0, conflictsRev: -1, conflicts: [],
+  touch: null, multi: false, loupe: false, loupeEl: null, lastType: 'mouse', tapAt: null,
 
   init() {
     this.cv = $('#plan'); this.g = this.cv.getContext('2d');
@@ -2237,12 +2240,16 @@ const Plan = {
     cv.addEventListener('pointerup', (e) => this.onUp(e));
     cv.addEventListener('pointercancel', (e) => this.onUp(e, true));
     cv.addEventListener('pointerleave', () => { if (!this.pointers.size) { this.cursor = null; this.snap = null; requestRender(); } });
+    this.lastType = window.matchMedia && window.matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse';
+    // magnifier shown above the finger while placing a point: the finger hides what is under it
+    this.loupeEl = el('div', { class: 'loupe', 'aria-hidden': 'true' }, el('canvas'), el('span', { class: 'loupe-txt' })); this.loupeEl.hidden = true; $('#stage').append(this.loupeEl);
     cv.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     cv.addEventListener('dblclick', (e) => { e.preventDefault(); this.finishChain(); });
     cv.addEventListener('contextmenu', (e) => e.preventDefault());
     // Safari trackpad pinch
+    // (on iPhone and iPad Safari sends these for finger pinches too: those are handled with the pointers, here only the trackpad)
     let gs = 1; cv.addEventListener('gesturestart', (e) => { e.preventDefault(); gs = 1; });
-    cv.addEventListener('gesturechange', (e) => { e.preventDefault(); const r = cv.getBoundingClientRect(); this.zoomAt(e.scale / gs, e.clientX - r.left, e.clientY - r.top); gs = e.scale; });
+    cv.addEventListener('gesturechange', (e) => { e.preventDefault(); if (this.pointers.size) { gs = e.scale; return; } const r = cv.getBoundingClientRect(); this.zoomAt(e.scale / gs, e.clientX - r.left, e.clientY - r.top); gs = e.scale; });
   },
   resize() {
     const r = this.cv.getBoundingClientRect(); if (!r.width) return;
@@ -2283,6 +2290,7 @@ const Plan = {
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     renderPlan(g, { scale: this.scale, ox: this.ox, oy: this.oy, W: this.W, H: this.H }, { interactive: true });
     $('#scaleRead').textContent = Math.round(this.scale / 50 * 100) + '%';
+    this.drawLoupe();
   },
 
   // ---------------- input ----------------
@@ -2298,8 +2306,10 @@ const Plan = {
     return Math.abs(e.deltaY) % 1 === 0 && Math.abs(e.deltaY) >= 50 && this._wheelHist.length <= 3;
   },
   onDown(e) {
-    this.stopGlide(); this.cv.setPointerCapture(e.pointerId);
+    this.stopGlide(); try { this.cv.setPointerCapture(e.pointerId); } catch { }
     this.pointers.set(e.pointerId, this.evS(e));
+    if (e.pointerType === 'touch') { this.lastType = 'touch'; this.touchDown(e); return; }
+    this.lastType = e.pointerType || 'mouse';
     if (this.pointers.size === 2) {
       // start pinch: abort any tool action
       if (this.drag && this.drag.moved) { this.drag = null; changed(); } else this.drag = null;
@@ -2316,6 +2326,8 @@ const Plan = {
     const T = TOOLS[S.tool]; if (T && T.down) T.down.call(this, e, w);
   },
   onMove(e) {
+    if (e.pointerType === 'touch') { if (this.pointers.has(e.pointerId)) { this.pointers.set(e.pointerId, this.evS(e)); this.touchMove(e); } return; }
+    if (e.pointerType === 'mouse' && !this.pointers.size && this.lastType !== 'mouse') { this.lastType = 'mouse'; }
     if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, this.evS(e));
     if (this.pinch && this.pointers.size >= 2) {
       const [a, b] = [...this.pointers.values()];
@@ -2330,10 +2342,119 @@ const Plan = {
     const T = TOOLS[S.tool]; if (T && T.move) T.move.call(this, e, w); else requestRender();
   },
   onUp(e, cancel) {
+    if (e.pointerType === 'touch') { if (!this.pointers.has(e.pointerId)) return; this.pointers.delete(e.pointerId); this.touchUp(e, cancel); return; }
     this.pointers.delete(e.pointerId);
     if (this.pinch) { if (this.pointers.size < 2) this.pinch = null; return; }
-    if (this.pan) { const h = this.pan.hist; this.pan = null; this.cv.classList.remove('panning'); if (h.length >= 2) { const a = h[0], b = h[h.length - 1], dt = (b.t - a.t) / 1000; if (dt > 0 && performance.now() - b.t < 60) this.glide((b.x - a.x) / dt, (b.y - a.y) / dt); } return; }
+    if (this.pan) { this.endPan(); return; }
     const T = TOOLS[S.tool]; if (T && T.up) T.up.call(this, e, this.evW(e), cancel);
+  },
+  // ---------------- touch ----------------
+  // One finger: tap selects, drag moves the view; the element already selected (or one held still for a moment) is
+  // dragged instead. Drawing tools show a magnifier and place the point when the finger lifts. A second finger
+  // always cancels what the first one started and becomes pinch-zoom + pan, and nothing else happens until every
+  // finger is up: no more walls or furniture caught by the start of a pinch.
+  touchDown(e) {
+    if (this.pointers.size > 2) return;
+    if (this.pointers.size === 2) { this.startPinch(); return; }
+    const s = this.evS(e), w = this.s2w(s.x, s.y); this.cursor = w; this.multi = false;
+    const tc = this.touch = { id: e.pointerId, sx: s.x, sy: s.y, w0: w, t0: performance.now(), mode: 'wait', ev: { clientX: e.clientX, clientY: e.clientY, pointerType: 'touch', button: 0, altKey: false, shiftKey: false } };
+    if (S.placing) { tc.mode = 'place'; this.snap = placeSnap(S.placing, w); this.loupe = true; requestRender(); return; }
+    const T = TOOLS[S.tool];
+    if (T && T.draw) { tc.mode = 'draw'; if (T.move) T.move.call(this, e, w); this.loupe = true; requestRender(); return; }
+    if (S.tool === 'bg') { if (S.project.bg) { tc.mode = 'grab'; T.down.call(this, e, w); } return; }
+    const h = handleAt(s); const hit = hitTest(w); tc.hit = hit;
+    if (h || (hit && S.sel && hit.kind === S.sel.kind && hit.id === S.sel.id && hit.kind !== 'room')) { tc.mode = 'grab'; TOOLS.select.down.call(this, e, w); return; }
+    tc.timer = setTimeout(() => this.touchHold(), 430);
+  },
+  touchHold() { // finger held still on something: select it and drag it right away
+    const tc = this.touch; if (!tc || tc.mode !== 'wait' || this.pointers.size !== 1 || this.multi) return;
+    const hit = tc.hit; if (!hit || hit.kind === 'room') return;
+    S.sel = hit; selectionChanged(); tc.mode = 'grab'; TOOLS.select.down.call(this, tc.ev, tc.w0);
+    try { navigator.vibrate && navigator.vibrate(10); } catch { }
+  },
+  touchMove(e) {
+    if (this.pinch) { this.pinchMove(); return; }
+    const s = this.evS(e), w = this.s2w(s.x, s.y);
+    if (this.pan) { this.panTo(s); return; }
+    const tc = this.touch; if (!tc || tc.id !== e.pointerId || this.multi) return;
+    this.cursor = w; const dist = Math.hypot(s.x - tc.sx, s.y - tc.sy);
+    if (tc.mode === 'wait') {
+      if (dist < 9) return;
+      clearTimeout(tc.timer); tc.mode = 'pan'; this.pan = { sx: tc.sx, sy: tc.sy, ox: this.ox, oy: this.oy, hist: [{ t: performance.now(), x: s.x, y: s.y }] }; this.panTo(s); return;
+    }
+    if (tc.mode === 'grab') { const T = TOOLS[S.tool]; if (T && T.move) T.move.call(this, e, w); return; }
+    if (tc.mode === 'draw') { if (dist > 24) tc.stroke = true; const T = TOOLS[S.tool]; if (T.move) T.move.call(this, e, w); else requestRender(); return; }
+    if (tc.mode === 'place') { this.snap = placeSnap(S.placing, w); requestRender(); }
+  },
+  touchUp(e, cancel) {
+    const tc = this.touch; if (tc) clearTimeout(tc.timer);
+    if (this.pinch) { // one finger left after a pinch: it keeps moving the view
+      if (this.pointers.size < 2) { this.pinch = null; if (this.pointers.size === 1) { const p = [...this.pointers.values()][0]; this.pan = { sx: p.x, sy: p.y, ox: this.ox, oy: this.oy, hist: [{ t: performance.now(), x: p.x, y: p.y }] }; } }
+      return;
+    }
+    if (this.pointers.size) return;
+    const multi = this.multi; this.multi = false; this.touch = null; this.loupe = false;
+    if (this.pan) { this.endPan(); if (!multi && tc && tc.mode === 'draw') this.snap = null; requestRender(); return; }
+    if (multi || cancel || !tc || tc.id !== e.pointerId || tc.mode === 'cancel') { if (this.drag) { this.drag = null; } if (tc && (tc.mode === 'draw' || tc.mode === 'place')) this.snap = null; requestRender(); return; }
+    const s = this.evS(e), w = this.s2w(s.x, s.y);
+    if (tc.mode === 'wait') { // tap
+      const now = performance.now(); const prev = this.tapAt; this.tapAt = { t: now, x: s.x, y: s.y };
+      const hit = tc.hit;
+      if (!hit && prev && now - prev.t < 320 && Math.hypot(prev.x - s.x, prev.y - s.y) < 34) { this.tapAt = null; this.zoomSmooth(1.8, s.x, s.y); return; } // double tap on empty floor: zoom in
+      if (hit) { if (!S.sel || S.sel.kind !== hit.kind || S.sel.id !== hit.id) { S.sel = hit; selectionChanged(); } }
+      else if (S.sel) { S.sel = null; selectionChanged(); }
+      requestRender(); return;
+    }
+    if (tc.mode === 'grab') { const T = TOOLS[S.tool]; if (T && T.up) T.up.call(this, e, w); this.snap = null; requestRender(); return; }
+    if (tc.mode === 'place') { this.placeItem(this.snap ? { x: this.snap.x, y: this.snap.y } : w, e); this.snap = null; return; }
+    if (tc.mode === 'draw') {
+      const T = TOOLS[S.tool];
+      if (tc.stroke && !this.toolHasStart()) T.down.call(this, tc.ev, tc.w0); // a stroke from A to B draws A→B in one go
+      T.down.call(this, e, w); if (T.up) T.up.call(this, e, w);
+      this.snap = null; refreshToolOpts(); requestRender();
+    }
+  },
+  strokeFrom() { const tc = this.touch; return tc && tc.mode === 'draw' && tc.stroke && !this.toolHasStart() ? snapPoint(tc.w0, { items: S.tool === 'pipe', edges: S.tool !== 'calibrate' }) : null; },
+  toolHasStart() { const t = S.tool; return t === 'wall' || t === 'pipe' ? this.chain.length > 0 : t === 'measure' ? !!this.measureA : t === 'calibrate' ? !!this.calA : true; },
+  startPinch() {
+    const tc = this.touch; if (tc) { clearTimeout(tc.timer); tc.mode = 'cancel'; }
+    if (this.drag) { if (this.drag.moved) this.revertDrag(); this.drag = null; } // the first finger had grabbed something: put it back
+    this.pan = null; this.snap = null; this.loupe = false; this.multi = true; this.stopGlide();
+    const [a, b] = [...this.pointers.values()];
+    this.pinch = { d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), m: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, scale: this.scale, ox: this.ox, oy: this.oy };
+    requestRender();
+  },
+  pinchMove() {
+    const [a, b] = [...this.pointers.values()]; if (!a || !b) return; const P = this.pinch;
+    const d = Math.hypot(a.x - b.x, a.y - b.y), m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const ns = clamp(P.scale * d / P.d, 6, 900); const wx = (P.m.x - P.ox) / P.scale, wy = (P.m.y - P.oy) / P.scale;
+    this.scale = ns; this.ox = m.x - wx * ns; this.oy = m.y - wy * ns; requestRender();
+  },
+  revertDrag() { const snap = S.undo.pop(); if (snap) { restoreSnap(snap); validateSel(); invalidateRooms(); S.rev++; schedule3D(); refreshSelBar(); } },
+  panTo(s) { this.ox = this.pan.ox + s.x - this.pan.sx; this.oy = this.pan.oy + s.y - this.pan.sy; const now = performance.now(); this.pan.hist.push({ t: now, x: s.x, y: s.y }); while (this.pan.hist.length > 2 && now - this.pan.hist[0].t > 90) this.pan.hist.shift(); requestRender(); },
+  endPan() { const h = this.pan.hist; this.pan = null; this.cv.classList.remove('panning'); if (h.length >= 2) { const a = h[0], b = h[h.length - 1], dt = (b.t - a.t) / 1000; if (dt > 0 && performance.now() - b.t < 60) this.glide((b.x - a.x) / dt, (b.y - a.y) / dt); } },
+  drawLoupe() {
+    const box = this.loupeEl; if (!box) return; const tc = this.touch;
+    const fp = this.loupe && tc && !this.pinch && !this.multi ? this.pointers.get(tc.id) : null;
+    if (!fp) { if (!box.hidden) box.hidden = true; return; }
+    const sn = this.snap; const tgt = sn && isFinite(sn.x) && isFinite(sn.y) ? this.w2s(sn) : fp;
+    const D = 124, Z = 2.2, dpr = this.dpr, cv = box.firstChild, px = Math.round(D * dpr);
+    if (cv.width !== px) { cv.width = cv.height = px; }
+    const g = cv.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = PAL.paper; g.fillRect(0, 0, px, px);
+    const src = D / Z; g.drawImage(this.cv, (tgt.x - src / 2) * dpr, (tgt.y - src / 2) * dpr, src * dpr, src * dpr, 0, 0, px, px);
+    const c = px / 2, r = 9 * dpr, gap = 4 * dpr; g.strokeStyle = PAL.new; g.lineWidth = 1.6 * dpr; g.beginPath();
+    g.moveTo(c - r - gap, c); g.lineTo(c - gap, c); g.moveTo(c + gap, c); g.lineTo(c + r + gap, c); g.moveTo(c, c - r - gap); g.lineTo(c, c - gap); g.moveTo(c, c + gap); g.lineTo(c, c + r + gap); g.stroke();
+    // what the point would be: length and angle from the previous point
+    let txt = ''; const from = (S.tool === 'wall' || S.tool === 'pipe') ? this.chain[this.chain.length - 1] : S.tool === 'measure' ? this.measureA : S.tool === 'calibrate' ? this.calA : null;
+    const start = tc.stroke && !from && (S.tool === 'wall' || S.tool === 'pipe' || S.tool === 'measure' || S.tool === 'calibrate') ? snapPoint(tc.w0, {}) : null;
+    const a = from || start;
+    if (a && sn && isFinite(sn.x)) { const L = V.dist(a, sn); const ang = Math.round(((Math.atan2(-(sn.y - a.y), sn.x - a.x) / DEG) + 360) % 360); txt = nf2.format(L) + ' m · ' + ang + '°'; }
+    else if (sn && sn.kind && sn.kind !== 'free') txt = { end: 'Angolo', edge: 'Sul muro', item: 'Aggancio', angle: '' }[sn.kind] || '';
+    box.lastChild.textContent = txt; box.lastChild.hidden = !txt;
+    let L = fp.x - D / 2, T = fp.y - D - 58;
+    if (T < 6) { T = clamp(fp.y - D / 2, 6, this.H - D - 6); L = fp.x + 48 + D < this.W ? fp.x + 48 : fp.x - 48 - D; }
+    L = clamp(L, 6, this.W - D - 6);
+    box.style.transform = `translate(${Math.round(L)}px, ${Math.round(T)}px)`; box.hidden = false;
   },
   startPan(e) { this.stopGlide(); const s = this.evS(e); this.pan = { sx: s.x, sy: s.y, ox: this.ox, oy: this.oy, hist: [{ t: performance.now(), x: s.x, y: s.y }] }; this.cv.classList.add('panning'); },
   // the plan keeps sliding a little after a quick drag, like native apps
@@ -2359,7 +2480,7 @@ const Plan = {
     S.sel = { kind: 'item', id: it.id };
     if (!(e && e.shiftKey)) { S.placing = null; refreshLibrary(); }
     setTab('props'); toast(c.name + ' aggiunto' + (S.placing ? ' · tocca ancora per aggiungerne un altro' : ''));
-    requestRender();
+    refreshToolOpts(); refreshSelBar(); requestRender();
   },
   finishChain() {
     const T = TOOLS[S.tool]; if (T && T.finish) T.finish.call(this);
@@ -2367,8 +2488,9 @@ const Plan = {
 };
 
 // ---------- snapping ----------
+const isTouchUI = () => Plan.lastType === 'touch'; // bigger targets and snapping for fingers
 function snapPoint(p, opt = {}) {
-  const tol = 12 / Plan.scale; const pr = S.project; let best = null, bd = tol;
+  const tol = (isTouchUI() ? 20 : 12) / Plan.scale; const pr = S.project; let best = null, bd = tol;
   const walls = pr.walls.filter((w) => wallVisible(w));
   if (opt.endpoints !== false) for (const w of walls) for (const q of [w.a, w.b]) { if (opt.skip && opt.skip.includes(q)) continue; const d = V.dist(p, q); if (d < bd) { bd = d; best = { x: q.x, y: q.y, kind: 'end' }; } }
   if (!best && opt.items) for (const it of pr.items) { if (!catOf(it).utility && it.type !== 'riunito') continue; const d = V.dist(p, it); if (d < tol * 1.2) { best = { x: it.x, y: it.y, kind: 'item' }; break; } }
@@ -2425,7 +2547,7 @@ function placeSnap(type, p, it) {
 
 // ---------- hit testing ----------
 function hitTest(w) {
-  const p = S.project; const tol = 7 / Plan.scale;
+  const p = S.project; const tol = (isTouchUI() ? 13 : 7) / Plan.scale;
   const items = p.items.filter((it) => itemVisible(it)).sort((a, b) => (elevOf(b) + dimsOf(b).h * .01) - (elevOf(a) + dimsOf(a).h * .01));
   // prefer smaller items on top when overlapping
   const hitItems = items.filter((it) => itemContains(it, w, tol * .5)).sort((a, b) => dimsOf(a).w * dimsOf(a).d - dimsOf(b).w * dimsOf(b).d);
@@ -2443,13 +2565,13 @@ function hitTest(w) {
 }
 function handleAt(sp) {
   const sel = S.sel; if (!sel) return null; const o = findSel(sel); if (!o) return null;
-  const near = (q, r = 12) => { const s = Plan.w2s(q); return Math.hypot(s.x - sp.x, s.y - sp.y) < r; };
+  const big = isTouchUI() ? 1.9 : 1; const near = (q, r = 12) => { const s = Plan.w2s(q); return Math.hypot(s.x - sp.x, s.y - sp.y) < r * big; };
   if (sel.kind === 'wall') { if (near(o.a)) return { h: 'a' }; if (near(o.b)) return { h: 'b' }; }
   if (sel.kind === 'item') { const rh = rotHandlePos(o); if (near(rh, 14)) return { h: 'rot' }; }
   if (sel.kind === 'pipe' || sel.kind === 'dim') { const pts = sel.kind === 'pipe' ? o.pts : [o.a, o.b]; for (let i = 0; i < pts.length; i++) if (near(pts[i])) return { h: 'v', i }; }
   return null;
 }
-function rotHandlePos(it) { const d = dimsOf(it); const off = d.d / 2 + Math.max(.25, 28 / Plan.scale); return V.add({ x: it.x, y: it.y }, V.rot({ x: 0, y: off }, it.rot * DEG)); }
+function rotHandlePos(it) { const d = dimsOf(it); const off = d.d / 2 + Math.max(.25, (isTouchUI() ? 44 : 28) / Plan.scale); return V.add({ x: it.x, y: it.y }, V.rot({ x: 0, y: off }, it.rot * DEG)); }
 function coincidentEnds(pt, exceptWall) {
   const out = [];
   for (const w of S.project.walls) { if (w === exceptWall) continue; if (V.dist(w.a, pt) < .015) out.push(w.a); if (V.dist(w.b, pt) < .015) out.push(w.b); }
@@ -2489,7 +2611,7 @@ const TOOLS = {
       const d = this.drag;
       if (!d) { const h = hitTest(w); const key = h ? h.kind + h.id : ''; if (key !== (S.hover ? S.hover.kind + S.hover.id : '')) { S.hover = h; requestRender(); } return; }
       const sp = this.evS(e);
-      if (!d.moved) { if (Math.hypot(sp.x - d.sx, sp.y - d.sy) < 4 || d.type === 'none') return; d.moved = true; pushUndo(); }
+      if (!d.moved) { if (Math.hypot(sp.x - d.sx, sp.y - d.sy) < (e.pointerType === 'touch' ? 8 : 4) || d.type === 'none') return; d.moved = true; pushUndo(); }
       if (d.type === 'item') {
         const it = d.item; const target = V.add(d.p0, V.sub(w, d.w0));
         const sn = placeSnap(it.type, target, it); const rot = sn.wall ? sn.rot : it.rot;
@@ -2537,13 +2659,13 @@ const TOOLS = {
     down(e, w) {
       const from = this.chain[this.chain.length - 1];
       const sn = snapPoint(w, { from }); const p = { x: sn.x, y: sn.y };
-      if (!from) { this.chain = [p]; requestRender(); return; }
-      if (this.chain.length > 1 && V.dist(p, this.chain[0]) < 14 / Plan.scale) { addWall(from, this.chain[0]); this.chain = []; requestRender(); return; }
-      if (V.dist(p, from) < .02) return;
-      addWall(from, p); this.chain.push(p);
+      if (!from) { this.chain = [p]; refreshToolOpts(); requestRender(); return; }
+      if (this.chain.length > 1 && V.dist(p, this.chain[0]) < (isTouchUI() ? 24 : 14) / Plan.scale) { addWall(from, this.chain[0]); this.chain = []; refreshToolOpts(); requestRender(); toast('Stanza chiusa'); return; }
+      if (V.dist(p, from) < .02) { if (e && e.pointerType === 'touch') this.finishChain(); return; } // tapping the last point again ends the wall
+      addWall(from, p); this.chain.push(p); if (this.chain.length === 2) refreshToolOpts();
       const now = performance.now(); this.lastTap = now;
     },
-    move(e, w) { const from = this.chain[this.chain.length - 1]; this.snap = snapPoint(w, { from }); requestRender(); },
+    move(e, w) { const from = this.chain[this.chain.length - 1] || this.strokeFrom(); this.snap = snapPoint(w, { from }); requestRender(); },
     finish() { this.chain = []; this.lenBuf = ''; refreshToolOpts(); requestRender(); },
   },
   door: {
@@ -2577,7 +2699,7 @@ const TOOLS = {
       const dm = { id: uid('d'), a: this.measureA, b: p }; this.measureA = null;
       if (V.dist(dm.a, dm.b) > .01) commit((pr) => pr.dims.push(dm));
     },
-    move(e, w) { this.snap = snapPoint(w, { from: this.measureA }); requestRender(); },
+    move(e, w) { this.snap = snapPoint(w, { from: this.measureA || this.strokeFrom() }); requestRender(); },
     finish() { this.measureA = null; requestRender(); },
   },
   pipe: {
@@ -2588,7 +2710,7 @@ const TOOLS = {
       if (from && V.dist(p, from) < .02) { this.finishChain(); return; }
       this.chain.push(p); requestRender();
     },
-    move(e, w) { const from = this.chain[this.chain.length - 1]; this.snap = snapPoint(w, { from, items: true }); requestRender(); },
+    move(e, w) { const from = this.chain[this.chain.length - 1] || this.strokeFrom(); this.snap = snapPoint(w, { from, items: true }); requestRender(); },
     finish() {
       if (this.chain.length >= 2) {
         const pp = { id: uid('p'), kind: S.pipeOpts.kind, pts: this.chain.map((q) => ({ ...q })), status: phase() === 'fatto' ? 'esistente' : 'nuovo' };
@@ -2606,7 +2728,7 @@ const TOOLS = {
       if (V.dist(a, p) < .02) return;
       openCalibrate(a, p);
     },
-    move(e, w) { this.snap = snapPoint(w, { from: this.calA, edges: false }); requestRender(); },
+    move(e, w) { this.snap = snapPoint(w, { from: this.calA || this.strokeFrom(), edges: false }); requestRender(); },
     finish() { this.calA = null; refreshToolOpts(); requestRender(); },
   },
   bg: {
@@ -3019,7 +3141,8 @@ function drawDim(g, dm, w2s, scale, sel, opt, K = 1) {
 
 function drawInteractive(g, w2s, scale, fontL) {
   const p = S.project; const P = Plan;
-  const handle = (q, r = 6) => { const s = w2s(q); g.beginPath(); g.arc(s.x, s.y, r, 0, Math.PI * 2); g.fillStyle = PAL.chrome; g.fill(); g.strokeStyle = PAL.accent; g.lineWidth = 2; g.stroke(); };
+  const big = isTouchUI() ? 1.5 : 1;
+  const handle = (q, r = 6) => { const s = w2s(q); r *= big; g.beginPath(); g.arc(s.x, s.y, r, 0, Math.PI * 2); g.fillStyle = PAL.chrome; g.fill(); g.strokeStyle = PAL.accent; g.lineWidth = 2; g.stroke(); };
   // selection overlays
   const o = findSel(S.sel);
   if (o && S.sel.kind === 'wall') {
@@ -3033,8 +3156,8 @@ function drawInteractive(g, w2s, scale, fontL) {
     const c = itemCorners(o).map(w2s); g.strokeStyle = PAL.accent; g.lineWidth = 1; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(c[0].x, c[0].y); c.slice(1).forEach((q) => g.lineTo(q.x, q.y)); g.closePath(); g.stroke(); g.setLineDash([]);
     const rh = rotHandlePos(o); const cs = w2s(o); const rs = w2s(rh);
     g.strokeStyle = PAL.accent; g.lineWidth = 1.5; g.beginPath(); g.moveTo(cs.x, cs.y); g.lineTo(rs.x, rs.y); g.stroke();
-    g.beginPath(); g.arc(rs.x, rs.y, 9, 0, Math.PI * 2); g.fillStyle = PAL.accent; g.fill();
-    g.strokeStyle = '#fff'; g.lineWidth = 1.6; g.beginPath(); g.arc(rs.x, rs.y, 4.5, -Math.PI * .9, Math.PI * .5); g.stroke();
+    g.beginPath(); g.arc(rs.x, rs.y, 9 * big, 0, Math.PI * 2); g.fillStyle = PAL.accent; g.fill();
+    g.strokeStyle = '#fff'; g.lineWidth = 1.6; g.beginPath(); g.arc(rs.x, rs.y, 4.5 * big, -Math.PI * .9, Math.PI * .5); g.stroke();
     const d = dimsOf(o); g.font = fontL(12, 600); g.textAlign = 'center'; g.textBaseline = 'middle';
     const txt = `${Math.round(d.w * 100)} × ${Math.round(d.d * 100)} cm`; const top = c.reduce((m, q) => q.y < m.y ? q : m, c[0]);
     const tw = g.measureText(txt).width + 12; g.fillStyle = PAL.ink; g.beginPath(); g.roundRect ? g.roundRect(cs.x - tw / 2, Math.min(...c.map((q) => q.y)) - 28, tw, 19, 6) : g.rect(cs.x - tw / 2, Math.min(...c.map((q) => q.y)) - 28, tw, 19); g.fill();
@@ -3054,6 +3177,12 @@ function drawInteractive(g, w2s, scale, fontL) {
     g.lineCap = 'round'; g.beginPath(); g.moveTo(pts[0].x, pts[0].y); pts.slice(1).forEach((q) => g.lineTo(q.x, q.y)); if (cur) g.lineTo(cur.x, cur.y); g.stroke(); g.globalAlpha = 1;
     if (cur && sn) { const last = P.chain[P.chain.length - 1]; const L = V.dist(last, sn); const ang = Math.round(((Math.atan2(-(sn.y - last.y), sn.x - last.x) / DEG) + 360) % 360); label(cur, (P.lenBuf ? P.lenBuf + ' m ↵' : nf2.format(L) + ' m') + ' · ' + ang + '°', tool === 'pipe' ? PAL[PIPE_KINDS[S.pipeOpts.kind][1]] : PAL.ink); }
     if (tool === 'wall' && P.chain.length > 1) { const f = w2s(P.chain[0]); g.beginPath(); g.arc(f.x, f.y, 8, 0, Math.PI * 2); g.strokeStyle = PAL.new; g.lineWidth = 2; g.stroke(); }
+  }
+  const sf = P.strokeFrom();
+  if (sf && sn && isFinite(sn.x)) { // finger stroke: first segment from where the finger went down
+    const a = w2s(sf), b = w2s(sn);
+    if (tool === 'wall') { g.strokeStyle = PAL.new; g.lineWidth = Math.max(2, S.wallOpts.t * scale); g.globalAlpha = .55; } else if (tool === 'pipe') { g.strokeStyle = PAL[PIPE_KINDS[S.pipeOpts.kind][1]]; g.lineWidth = 3; } else { g.strokeStyle = tool === 'calibrate' ? PAL.warn : PAL.accent; g.lineWidth = 2; }
+    g.lineCap = 'round'; g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); g.globalAlpha = 1; handle(sf, 4);
   }
   if (tool === 'measure' && P.measureA && sn) { const a = w2s(P.measureA), b = w2s(sn); g.strokeStyle = PAL.accent; g.lineWidth = 1.5; g.setLineDash([5, 4]); g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); g.setLineDash([]); label(b, fmtM(V.dist(P.measureA, sn)), PAL.accent); }
   if (tool === 'calibrate' && P.calA && sn) { const a = w2s(P.calA), b = w2s(sn); g.strokeStyle = PAL.warn; g.lineWidth = 2; g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); handle(P.calA, 5); label(b, 'Misura attuale ' + fmtM(V.dist(P.calA, sn)), PAL.warn); }
@@ -3574,20 +3703,29 @@ const View3D = {
   },
   onDown(e) {
     if (S.view !== '3d') { this.walkDown(e); return; }
-    if (e.pointerType === 'touch' && this._touches > 0) { this._touches++; return; }
+    if (e.pointerType === 'touch' && this._touches > 0) { // second finger: pinch and pan, whatever the first one was doing
+      this._touches++; this.down = null; const d = this.drag;
+      if (d && d.id !== e.pointerId) {
+        this.drag = null; if (d.moved) { const sn = S.undo.pop(); if (sn) { restoreSnap(sn); validateSel(); } const it = findSel(S.sel); if (it) this.liveItem(it); }
+        this.controls.enabled = true; // hand the first finger to the orbit controls so this one makes a two-finger gesture
+        try { this.controls._onPointerDown({ pointerId: d.id, pointerType: 'touch', button: 0, pageX: d.lx, pageY: d.ly, clientX: d.lx, clientY: d.ly, ctrlKey: false, metaKey: false, shiftKey: false }); } catch (err) { console.warn(err); }
+      }
+      return;
+    }
     this._touches = (this._touches || 0) + (e.pointerType === 'touch' ? 1 : 0);
     const hit = this.pick(e); this.down = { x: e.clientX, y: e.clientY, hit, id: e.pointerId };
     if (hit && S.sel && S.sel.kind === 'item' && S.sel.id === hit.id && e.button === 0) {
       const it = findSel(S.sel); const y = elevOf(it);
       this.controls.enabled = false;
       const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -y); const pt = new THREE.Vector3(); this.ray(e).ray.intersectPlane(plane, pt);
-      this.drag = { it, plane, off: { x: it.x - pt.x, z: it.y - pt.z }, moved: false, id: e.pointerId };
+      this.drag = { it, plane, off: { x: it.x - pt.x, z: it.y - pt.z }, moved: false, id: e.pointerId, lx: e.pageX, ly: e.pageY, sx: e.clientX, sy: e.clientY };
       this.renderer.domElement.setPointerCapture(e.pointerId);
     }
   },
   onMove(e) {
     if (S.view === 'walk') { this.walkMove(e); return; }
-    const d = this.drag; if (!d || d.id !== e.pointerId) return;
+    const d = this.drag; if (!d || d.id !== e.pointerId) return; d.lx = e.pageX; d.ly = e.pageY;
+    if (!d.moved && e.pointerType === 'touch' && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 8) return; // a pinch may be starting
     const pt = new THREE.Vector3(); if (!this.ray(e).ray.intersectPlane(d.plane, pt)) return;
     if (!d.moved) { d.moved = true; pushUndo(); }
     const target = { x: pt.x + d.off.x, y: pt.z + d.off.z }; const sn = placeSnap(d.it.type, target, d.it);
@@ -3934,35 +4072,50 @@ function optGroup(title, ...kids) { return el('div', { class: 'opt-group' }, tit
 function refreshToolOpts() {
   const box = $('#toolOpts'); box.innerHTML = '';
   if (S.view !== '2d') return;
-  const t = S.tool; const ph = phase();
+  buildToolOpts(box);
+  if (window.matchMedia('(max-width: 600px)').matches) { // phones: buttons on one scrolling row, the hint under it
+    const row = el('div', { class: 'opts-scroll' }); for (const k of [...box.children]) if (!k.classList.contains('hint') && !k.classList.contains('keep-row')) row.append(k);
+    if (row.children.length) box.prepend(row);
+  }
+}
+function buildToolOpts(box) {
+  const t = S.tool; const ph = phase(); const touch = isTouchUI();
   const phaseNote = ph === 'fatto' ? 'Stai disegnando lo stato di fatto' : 'Le nuove opere compaiono in rosso nella vista Gialli e rossi';
   if (S.placing) {
     const c = CAT_BY_TYPE[S.placing];
-    box.append(el('div', { class: 'hint' }, `Tocca la pianta per posizionare: ${c.name}. Vicino a un muro si aggancia da solo.`), el('button', { class: 'btn small', type: 'button', onclick: () => { S.placing = null; refreshLibrary(); refreshToolOpts(); requestRender(); } }, 'Annulla'));
+    box.append(el('div', { class: 'hint' }, touch ? `${c.name}: tocca la pianta e trascina per regolare, si posiziona quando sollevi il dito. Vicino a un muro si aggancia da solo.` : `Tocca la pianta per posizionare: ${c.name}. Vicino a un muro si aggancia da solo.`), el('button', { class: 'btn small', type: 'button', onclick: () => { S.placing = null; refreshLibrary(); refreshToolOpts(); requestRender(); } }, 'Annulla'));
     return;
   }
   if (t === 'select') {
-    if (!S.sel && !S.hintSeen) box.append(el('div', { class: 'hint' }, 'Tocca un elemento per modificarlo · trascina per spostarlo · scegli un arredo dal pannello per aggiungerlo'));
+    if (!S.sel && !S.hintSeen) box.append(el('div', { class: 'hint' }, touch ? 'Tocca per selezionare · un dito sposta la vista · tieni premuto un arredo o un muro per trascinarlo · due dita per lo zoom' : 'Tocca un elemento per modificarlo · trascina per spostarlo · scegli un arredo dal pannello per aggiungerlo'));
   } else if (t === 'wall') {
-    box.append(optGroup('Spessore', ...[.075, .10, .125, .15, .25, .30].map((v) => chip(nf1.format(v * 100).replace(',0', '') + ' cm', Math.abs(S.wallOpts.t - v) < .001, () => { S.wallOpts.t = v; refreshToolOpts(); }))));
-    box.append(optGroup('Tipo', chip('Cartongesso', S.wallOpts.type === 'cartongesso', () => { S.wallOpts.type = 'cartongesso'; refreshToolOpts(); }), chip('Muratura', S.wallOpts.type === 'muratura', () => { S.wallOpts.type = 'muratura'; refreshToolOpts(); })));
+    const wallSettings = () => {
+      box.append(optGroup('Spessore', ...[.075, .10, .125, .15, .25, .30].map((v) => chip(nf1.format(v * 100).replace(',0', '') + ' cm', Math.abs(S.wallOpts.t - v) < .001, () => { S.wallOpts.t = v; refreshToolOpts(); }))));
+      box.append(optGroup('Tipo', chip('Cartongesso', S.wallOpts.type === 'cartongesso', () => { S.wallOpts.type = 'cartongesso'; refreshToolOpts(); }), chip('Muratura', S.wallOpts.type === 'muratura', () => { S.wallOpts.type = 'muratura'; refreshToolOpts(); })));
+    };
+    if (!Plan.chain.length) wallSettings();
     if (Plan.chain.length) {
-      const inp = el('input', { class: 'len-input', id: 'lenInput', type: 'text', inputmode: 'decimal', placeholder: 'm', 'aria-label': 'Lunghezza in metri' });
+      const inp = el('input', { class: 'len-input', id: 'lenInput', type: 'text', inputmode: 'decimal', placeholder: 'm', 'aria-label': 'Lunghezza in metri', autocomplete: 'off' });
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { applyLength(inp.value); inp.value = ''; } e.stopPropagation(); });
-      box.append(optGroup('Lunghezza', inp, el('button', { class: 'btn small', type: 'button', onclick: () => { applyLength(inp.value); inp.value = ''; } }, 'Applica')));
+      const dirBtn = (lab, dx, dy, name) => el('button', { class: 'chip dir', type: 'button', 'aria-label': 'Verso ' + name, title: name, onclick: () => { applyLength(inp.value, { x: dx, y: dy }); inp.value = ''; } }, lab);
+      // while drawing, the controls you need come first (on a phone the settings scroll, the length gets its own row)
       box.append(el('button', { class: 'btn small primary', type: 'button', onclick: () => Plan.finishChain() }, 'Fine'));
-    } else box.append(el('div', { class: 'hint' }, 'Tocca per iniziare il muro, poi tocca ogni angolo. Tocca il primo punto per chiudere. ' + phaseNote + '.'));
+      box.append(el('button', { class: 'btn small', type: 'button', onclick: () => undoWallPoint() }, icon('undo', 15), 'Punto'));
+      const lg = optGroup('Lunghezza', inp, dirBtn('←', -1, 0, 'sinistra'), dirBtn('↑', 0, -1, 'su'), dirBtn('↓', 0, 1, 'giù'), dirBtn('→', 1, 0, 'destra'), touch ? null : el('button', { class: 'btn small', type: 'button', onclick: () => { applyLength(inp.value); inp.value = ''; } }, 'Applica')); lg.classList.add('keep-row');
+      wallSettings(); box.append(lg);
+      if (touch) box.append(el('div', { class: 'hint' }, Plan.chain.length < 2 ? 'Trascina fino al prossimo angolo e solleva, oppure scrivi la lunghezza e tocca una freccia.' : 'Trascina al prossimo angolo · tocca il primo punto per chiudere, l\'ultimo o Fine per finire'));
+    } else box.append(el('div', { class: 'hint' }, touch ? 'Appoggia il dito sul primo angolo e trascina fino al secondo: il punto si vede nella lente e si fissa quando sollevi. Due dita per spostarti e zoomare.' : 'Tocca per iniziare il muro, poi tocca ogni angolo. Tocca il primo punto per chiudere. ' + phaseNote + '.'));
   } else if (t === 'door' || t === 'window') {
     const o = t === 'door' ? S.openOpts : S.winOpts;
     const kinds = t === 'door' ? ['porta', 'scorrevole', 'scomparsa', 'varco'] : ['finestra', 'portafinestra'];
     const widths = t === 'door' ? [.7, .8, .9, 1.0, 1.2] : [.6, .8, 1.0, 1.2, 1.5, 2.0];
     box.append(optGroup('Tipo', ...kinds.map((k) => chip(OPEN_KINDS[k].replace('Porta ', '').replace(/^a /, 'A ').replace(/^./, (c) => c.toUpperCase()), o.kind === k, () => { o.kind = k; refreshToolOpts(); }))));
     box.append(optGroup('Larghezza', ...widths.map((v) => chip(Math.round(v * 100) + ' cm', Math.abs(o.w - v) < .001, () => { o.w = v; refreshToolOpts(); }))));
-    box.append(el('div', { class: 'hint' }, 'Tocca un muro. Il lato del muro su cui tocchi decide il verso di apertura.'));
+    box.append(el('div', { class: 'hint' }, touch ? 'Trascina il dito lungo un muro e solleva dove vuoi l\'apertura. Il lato del muro decide il verso di apertura.' : 'Tocca un muro. Il lato del muro su cui tocchi decide il verso di apertura.'));
   } else if (t === 'room') {
     box.append(el('div', { class: 'hint' }, 'Tocca dentro uno spazio chiuso da muri per creare la stanza e calcolarne la superficie.'));
   } else if (t === 'measure') {
-    box.append(el('div', { class: 'hint' }, Plan.measureA ? 'Tocca il secondo punto' : 'Tocca due punti per aggiungere una quota'));
+    box.append(el('div', { class: 'hint' }, Plan.measureA ? 'Tocca il secondo punto' : touch ? 'Trascina da un punto all\'altro per aggiungere una quota' : 'Tocca due punti per aggiungere una quota'));
     if (S.project.dims.length) box.append(el('button', { class: 'btn small', type: 'button', onclick: () => commit((p) => { p.dims = []; }) }, 'Cancella tutte le quote'));
   } else if (t === 'pipe') {
     box.append(optGroup('Impianto', ...Object.entries(PIPE_KINDS).map(([k, [lab, tok]]) => chip([el('span', { class: 'swatch-dot', style: { background: PAL[tok] } }), lab], S.pipeOpts.kind === k, () => { S.pipeOpts.kind = k; refreshToolOpts(); requestRender(); }))));
@@ -3983,14 +4136,19 @@ function refreshToolOpts() {
     }
   }
 }
-function applyLength(v) {
-  const L = parseNum(v); if (!isFinite(L) || L <= 0) { toast('Scrivi una lunghezza in metri, per esempio 3,25'); return; }
+function applyLength(v, forced) {
+  const L = parseNum(v); if (!isFinite(L) || L <= 0) { toast('Scrivi prima la lunghezza in metri, per esempio 3,25'); const i = $('#lenInput'); if (i) i.focus(); return; }
   const from = Plan.chain[Plan.chain.length - 1]; if (!from) return;
   const to = Plan.snap || Plan.cursor || { x: from.x + 1, y: from.y };
-  let dir = V.sub(to, from); if (V.len(dir) < 1e-6) dir = { x: 1, y: 0 }; dir = V.norm(dir);
+  let dir = forced || V.sub(to, from); if (V.len(dir) < 1e-6) dir = { x: 1, y: 0 }; dir = V.norm(dir);
   const p = V.add(from, V.mul(dir, L));
   if (S.tool === 'wall') addWall(from, p); Plan.chain.push(p); Plan.lenBuf = ''; requestRender(); refreshToolOpts();
-  const inp = $('#lenInput'); if (inp) inp.focus();
+  const inp = $('#lenInput'); if (inp && !forced) inp.focus();
+}
+function undoWallPoint() { // the last segment of the wall being drawn goes away, the chain continues from the point before
+  const P = Plan; if (!P.chain.length) return;
+  if (P.chain.length > 1 && S.tool === 'wall') undo();
+  P.chain.pop(); P.snap = null; refreshToolOpts(); requestRender();
 }
 
 // ---------- tabs & panel ----------
@@ -4000,14 +4158,35 @@ function setTab(t) {
   refreshPanel(true);
 }
 function togglePanel(force) {
-  S.panelOpen = force ?? !S.panelOpen; $('#main').classList.toggle('panel-closed', !S.panelOpen);
+  S.panelOpen = force ?? !S.panelOpen; $('#main').classList.toggle('panel-closed', !S.panelOpen); refreshSelBar();
   try { localStorage.setItem('ps-panel', S.panelOpen ? '1' : '0'); } catch { }
   setTimeout(() => { Plan.resize(); View3D.resize(); }, 30);
 }
 function selectionChanged() {
   if (S.sel) { setTab('props'); if (window.matchMedia('(max-width: 1000px)').matches && S.tool === 'select' && !S.panelOpen) { /* don't force open */ } }
   else refreshPanel();
-  refreshToolOpts(); requestRender(); if (View3D.ready) View3D.updateSelection();
+  refreshToolOpts(); refreshSelBar(); requestRender(); if (View3D.ready) View3D.updateSelection();
+}
+// phones and tablets: the panel stays closed while you work on the plan, so the selection gets a bar with the common actions
+function refreshSelBar() {
+  const bar = $('#selBar'); if (!bar || !S.project) return;
+  const o = findSel(S.sel); const narrow = window.matchMedia('(max-width: 1000px)').matches; // phones and iPad, where the panel floats
+  const show = !!(narrow && o && S.view !== 'walk' && !S.panelOpen && !S.placing);
+  bar.hidden = !show; $('#stage').classList.toggle('has-selbar', show); document.body.classList.toggle('selbar-on', show); if (!show) return;
+  const k = S.sel.kind;
+  const name = k === 'item' ? catOf(o).name.replace(/\s*\(.*\)\s*$/, '') : k === 'wall' ? `Muro ${nf2.format(wallLen(o))} m · ${Math.round(o.t * 100)} cm` : k === 'opening' ? (OPEN_KINDS[o.kind] || 'Apertura') + ` ${Math.round(o.w * 100)} cm` : k === 'room' ? o.name : k === 'pipe' ? 'Tubazione' : 'Quota';
+  const btn = (ico, label, fn, cls = '') => el('button', { class: 'selbtn ' + cls, type: 'button', 'aria-label': label || 'Chiudi', onclick: fn }, icon(ico, 19), label ? el('span', {}, label) : null);
+  bar.innerHTML = '';
+  bar.append(el('div', { class: 'selname' }, name));
+  const acts = el('div', { class: 'selacts' });
+  if (k === 'item') {
+    acts.append(btn('rotate', 'Ruota', () => { const it = findSel(S.sel); if (!it || S.sel.kind !== 'item') return; commit(() => { it.rot = ((Math.round(it.rot || 0) + 90) % 360 + 360) % 360; nudgeOut(it); settleOnSurface(it); }); refreshSelBar(); }));
+    acts.append(btn('copy', 'Duplica', () => duplicateSel()));
+  }
+  acts.append(btn('edit', 'Modifica', () => { setTab('props'); togglePanel(true); }));
+  acts.append(btn('trash', 'Elimina', () => smartDelete(), 'danger'));
+  acts.append(btn('close', '', () => { S.sel = null; selectionChanged(); }, 'x'));
+  bar.append(acts);
 }
 let _panelLock = false;
 function refreshPanel(force) {
@@ -4517,6 +4696,7 @@ async function setView(v) {
   $('#plan').hidden = v !== '2d'; $('#zoomCtl').hidden = v !== '2d'; $('#toolOpts').hidden = v !== '2d';
   $('#view3d').hidden = v === '2d'; $('#hud3d').hidden = v !== '3d'; $('#hud3dBottom').hidden = v !== '3d'; $('#walkHud').hidden = v !== 'walk';
   $('#main').classList.toggle('no-rail', v !== '2d');
+  refreshSelBar();
   if (v !== '2d') {
     if (S.tool !== 'select') setTool('select'); S.placing = null;
     View3D.resize(); View3D.dirty = true;
@@ -4620,7 +4800,11 @@ async function openProjects() {
 function openHelp() {
   openSheet((sh) => {
     const rows = [['V', 'Seleziona e sposta'], ['W', 'Muro (scrivi la lunghezza e premi Invio)'], ['D / F', 'Porta / Finestra'], ['R', 'Stanza (calcola i m²)'], ['M', 'Quota'], ['T', 'Tubazione'], ['C', 'Calibra la scala'], ['B', 'Planimetria di sfondo'], ['1 · 2 · 3', 'Pianta · 3D · Passeggiata'], ['⌫', 'Elimina o segna da demolire'], ['⌘D', 'Duplica arredo'], ['[ ]', 'Ruota di 15°'], ['Frecce', 'Sposta di 1 cm (⇧ 10 cm)'], ['⌘Z · ⇧⌘Z', 'Annulla · Ripeti'], ['Esc', 'Annulla l\'azione in corso'], ['Spazio + trascina', 'Sposta la vista']];
-    sh.append(sheetHead('Comandi', 'Su iPad: un dito per disegnare e spostare, due dita per zoom e spostamento della vista. Apple Pencil funziona come il dito.'));
+    const touchRows = [['Tocco', 'Seleziona (tocca il vuoto per deselezionare)'], ['Un dito', 'Sposta la vista; trascina l\'elemento già selezionato per spostarlo'], ['Tieni premuto', 'Seleziona un arredo o un muro e trascinalo subito'], ['Due dita', 'Zoom e spostamento: annullano sempre quello che stava facendo il primo dito'], ['Doppio tocco', 'Ingrandisci dove tocchi'], ['Muro', 'Appoggia il dito sul primo angolo e trascina fino al secondo; la lente mostra il punto, che si fissa quando sollevi. Poi trascina agli angoli successivi'], ['Fine', 'Tocca l\'ultimo punto o Fine; tocca il primo punto per chiudere la stanza'], ['Lunghezza', 'Scrivi i metri e tocca una freccia per tracciare il muro in quella direzione']];
+    sh.append(sheetHead('Comandi', 'Con il mouse e la tastiera, oppure con le dita su iPhone e iPad. Apple Pencil funziona come il mouse: tocca e trascina direttamente.'));
+    sh.append(el('div', { class: 'lib-cat-title' }, 'Con le dita'));
+    sh.append(el('div', { class: 'help-grid' }, ...touchRows.flatMap(([k, v]) => [el('kbd', {}, k), el('span', {}, v)])));
+    sh.append(el('div', { class: 'lib-cat-title' }, 'Tastiera'));
     sh.append(el('div', { class: 'help-grid' }, ...rows.flatMap(([k, v]) => [el('kbd', {}, k), el('span', {}, v)])));
     sh.append(el('p', { class: 'note' }, 'Passeggiata: trascina per guardarti intorno (la vista segue il dito o il mouse), tocca il pavimento per camminare fin lì, usa il joystick in basso a sinistra, WASD o le frecce; sul trackpad scorri in orizzontale per girarti e in verticale per avanzare. Puoi anche toccare la mappa per spostarti.'));
   });
@@ -5128,6 +5312,9 @@ async function boot() {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', onTheme);
   new MutationObserver(onTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   buildRail(); Plan.init();
+  // iPhone and iPad: no page zoom from a pinch on the toolbars (it left the whole app zoomed in), the plan has its own
+  document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
+  window.addEventListener('resize', () => { refreshSelBar(); });
   const tb = document.querySelector('.topbar'); new ResizeObserver(() => document.documentElement.style.setProperty('--topbar-h', tb.getBoundingClientRect().height + 'px')).observe(tb);
   $$('#viewSeg button').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
   $$('#phaseSeg button').forEach((b) => b.addEventListener('click', () => setPhase(b.dataset.phase)));
@@ -5166,6 +5353,6 @@ async function boot() {
   window.addEventListener('online', () => { cloudBadge(); refreshFromRemote(); });
   window.addEventListener('offline', () => cloudBadge());
 }
-window.__planner = { S, Plan, View3D, commit, setView, setPhase, setTool, Store, parseFirebaseConfig, CAT_BY_TYPE, CATALOG, settleOnSurface, connectToPC, cableNeeds, selectionChanged, elevOf, dimsOf, catOf, computeRooms, zoneConflicts, zonesOf, quantities, roomAtPoint, FB, openLogin, goCloud, itemsInWalls, itemInWalls, constrainMove, nudgeOut, resolveFin, wallSideRooms, setSideFin };
+window.__planner = { S, Plan, View3D, refreshSelBar, undoWallPoint, applyLength, commit, setView, setPhase, setTool, Store, parseFirebaseConfig, CAT_BY_TYPE, CATALOG, settleOnSurface, connectToPC, cableNeeds, selectionChanged, elevOf, dimsOf, catOf, computeRooms, zoneConflicts, zonesOf, quantities, roomAtPoint, FB, openLogin, goCloud, itemsInWalls, itemInWalls, constrainMove, nudgeOut, resolveFin, wallSideRooms, setSideFin };
 boot();
 

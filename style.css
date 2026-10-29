@@ -391,7 +391,7 @@ button.list-row:hover { background: var(--accent-weak); }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .help-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; }
-.help-grid kbd { font-family: var(--font-label); background: var(--sheet); border: 1px solid var(--line-2); border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
+.help-grid kbd { align-self: start; justify-self: start; font-family: var(--font-label); background: var(--sheet); border: 1px solid var(--line-2); border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
 
 .only-narrow { display: none !important; }
 .fab { position: absolute; right: 12px; bottom: 44px; z-index: 6; box-shadow: var(--shadow); display: none; }
@@ -458,6 +458,52 @@ button.list-row:hover { background: var(--accent-weak); }
   .seg.phase button { flex: 1 1 0; justify-content: center; padding: 6px 4px; min-width: 0; }
   .phase .l-long { display: none !important; }
   .phase .l-short { display: inline !important; overflow: hidden; text-overflow: ellipsis; }
+}
+/* ---------- touch: magnifier, selection bar, compact options ---------- */
+html, body { touch-action: manipulation; }
+.stage, .rail, .selbar { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.stage input, .stage textarea { -webkit-user-select: text; user-select: text; }
+.loupe { position: absolute; left: 0; top: 0; width: 124px; z-index: 8; pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 5px; will-change: transform; }
+.loupe[hidden] { display: none; }
+.loupe canvas { width: 124px; height: 124px; border-radius: 50%; border: 3px solid var(--chrome); box-shadow: 0 6px 22px rgba(0, 0, 0, .28), 0 0 0 1px var(--line-2); background: var(--paper); }
+.loupe-txt { font-family: var(--font-label); font-size: 13.5px; font-weight: 600; background: var(--ink); color: var(--chrome); padding: 3px 9px; border-radius: 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.loupe-txt[hidden] { display: none; }
+.selbar {
+  position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 7; display: flex; align-items: center; gap: 4px;
+  background: var(--chrome); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 5px 5px 5px 12px;
+}
+.selbar[hidden] { display: none; }
+.selname { flex: 1 1 auto; min-width: 0; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selacts { display: flex; gap: 1px; flex: 0 0 auto; }
+.selbtn {
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 50px; height: 50px;
+  padding: 4px 5px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-2); font-size: 11px; font-family: inherit;
+}
+.selbtn:active { background: var(--accent-weak); }
+.selbtn.danger { color: var(--bad); }
+.selbtn.x { min-width: 38px; color: var(--muted); }
+@media (min-width: 761px) { .selbar { left: auto; right: 12px; bottom: 12px; width: 470px; } .stage.has-selbar .fab { display: none !important; } }
+@media (max-width: 760px) { .stage.has-selbar .zoom, .stage.has-selbar .fab, .stage.has-selbar .hud3d-bottom { display: none !important; } }
+body.selbar-on .toast { bottom: max(152px, calc(env(safe-area-inset-bottom, 0px) + 146px)); }
+.opts-scroll { display: flex; gap: 6px; overflow-x: auto; flex: 1 1 100%; max-width: 100%; scrollbar-width: none; -webkit-overflow-scrolling: touch; pointer-events: auto; padding: 1px 1px 3px; }
+.opts-scroll::-webkit-scrollbar { display: none; }
+.opts-scroll > * { flex: 0 0 auto; }
+.opts-scroll .opt-group { flex-wrap: nowrap; }
+.chip.dir { min-width: 34px; justify-content: center; font-size: 15px; font-weight: 600; }
+@media (max-width: 600px) {
+  .opts .hint { font-size: 12.5px; padding: 5px 9px; }
+  /* 3D and walk controls on one scrolling row: the view stays free for the fingers */
+  .hud3d, .walk-top { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; pointer-events: auto; }
+  .hud3d::-webkit-scrollbar, .walk-top::-webkit-scrollbar { display: none; }
+  .hud3d > *, .walk-top > * { flex: 0 0 auto; }
+  .hud3d .opt-group, .walk-top .opt-group { flex-wrap: nowrap; }
+}
+@media (max-width: 760px) { .toast { bottom: max(84px, calc(env(safe-area-inset-bottom, 0px) + 78px)); } }
+/* fingers: inputs at 16px so Safari doesn't zoom the page on focus, larger chips */
+@media (pointer: coarse) {
+  input, select, textarea { font-size: 16px !important; }
+  .opts .chip { padding: 7px 10px; }
+  .opts .btn.small { min-height: 36px; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
