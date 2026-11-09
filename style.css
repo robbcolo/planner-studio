@@ -505,6 +505,18 @@ body.selbar-on .toast { bottom: max(152px, calc(env(safe-area-inset-bottom, 0px)
   .opts .chip { padding: 7px 10px; }
   .opts .btn.small { min-height: 36px; }
 }
+/* iPhone / iPad: iOS draws a soft blur over the top edge of the page (under the clock). The top bar and the sheets
+   stay below it, so buttons are never under the fade and every tap reaches them. */
+.app { padding-top: max(10px, env(safe-area-inset-top, 0px)); }
+.sheet-back { padding-top: max(16px, calc(env(safe-area-inset-top, 0px) + 12px)); padding-bottom: max(16px, env(safe-area-inset-bottom, 0px)); }
+@media (pointer: coarse) {
+  .app { padding-top: calc(env(safe-area-inset-top, 0px) + 24px); }
+  .sheet-back { padding-top: calc(env(safe-area-inset-top, 0px) + 30px); }
+  .sheet { max-height: calc(100% - 8px); }
+}
+@media (pointer: coarse) and (max-width: 1000px) and (min-width: 761px) {
+  .panel { top: calc(var(--topbar-h, 54px) + env(safe-area-inset-top, 0px) + 34px); }
+}
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
